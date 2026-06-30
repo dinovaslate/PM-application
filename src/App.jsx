@@ -46,6 +46,11 @@ const HEALTH_COLORS = {
 };
 
 const HEALTH_STACK_KEYS = ["Healthy", "Warning", "Need Improvement"];
+const HEALTH_SHORT_LABELS = {
+  Healthy: "Healthy",
+  Warning: "Warning",
+  "Need Improvement": "Need Impr.",
+};
 
 const DUE_COLORS = {
   "On Track": "#0f172a",
@@ -73,6 +78,7 @@ const tabs = [
   {
     id: "overview",
     label: "Executive Overview",
+    mobileLabel: "Overview",
     shortLabel: "Ringkasan Eksekutif",
     icon: CircleGauge,
     title: "Ringkasan Eksekutif",
@@ -81,6 +87,7 @@ const tabs = [
   {
     id: "health",
     label: "Project Health",
+    mobileLabel: "Health",
     shortLabel: "Kesehatan Proyek",
     icon: BarChart3,
     title: "Project Health Analysis",
@@ -89,6 +96,7 @@ const tabs = [
   {
     id: "capacity",
     label: "PM Capacity",
+    mobileLabel: "Capacity",
     shortLabel: "Kapasitas PM",
     icon: Users,
     title: "PM Capacity & Workload",
@@ -97,6 +105,7 @@ const tabs = [
   {
     id: "priority",
     label: "Action List",
+    mobileLabel: "Action",
     shortLabel: "Daftar Tindakan",
     icon: AlertTriangle,
     title: "Priority Action List",
@@ -266,8 +275,9 @@ function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onResetSamp
               }`}
             >
               <Icon size={16} strokeWidth={1.8} />
-              <span className="min-w-0 truncate lg:hidden xl:inline">{tab.label}</span>
+              <span className="min-w-0 truncate lg:hidden">{tab.mobileLabel}</span>
               <span className="hidden min-w-0 truncate lg:inline xl:hidden">{tab.shortLabel}</span>
+              <span className="hidden min-w-0 truncate xl:inline">{tab.label}</span>
             </button>
           );
         })}
@@ -357,7 +367,7 @@ function ExecutiveOverview({ dashboard }) {
   const isProxyWorkload = workloadMode === "proxy";
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <KpiCard title="Total" value={kpis.totalProjects} icon={BriefcaseBusiness} tone="slate" />
         <KpiCard title="Sehat" value={kpis.healthy} icon={CheckCircle2} tone="green" />
@@ -369,15 +379,7 @@ function ExecutiveOverview({ dashboard }) {
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <Panel title="Distribusi Project Berdasarkan Unit Bisnis" action="Health">
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={charts.healthByBu}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="name" tickLine={false} axisLine={false} />
-              <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
-              <Tooltip content={<ChartTooltip />} />
-              <StackedHealthBars data={charts.healthByBu} />
-            </BarChart>
-          </ResponsiveContainer>
+          <HealthByBuVisualization data={charts.healthByBu} />
         </Panel>
 
         <Panel title={isProxyWorkload ? "Tren Active Project PM sampai Desember" : "Tren Beban Kerja PM sampai Desember"} action={getWorkloadAction(workloadMode)}>
@@ -421,7 +423,7 @@ function ProjectHealthAnalysis({ dashboard }) {
   const hasIssueData = (dashboard.dataQuality?.issueInputCount || 0) > 0;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
         <Panel title="Schedule Performance" action={hasScheduleData ? `${scheduleTotal} records` : "No schedule data"}>
           {hasScheduleData ? (
@@ -469,15 +471,7 @@ function ProjectHealthAnalysis({ dashboard }) {
       </div>
 
       <Panel title="Health Berdasarkan BU">
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={charts.healthByBu}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-            <XAxis dataKey="name" tickLine={false} axisLine={false} />
-            <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
-            <Tooltip content={<ChartTooltip />} />
-            <StackedHealthBars data={charts.healthByBu} />
-          </BarChart>
-        </ResponsiveContainer>
+        <HealthByBuVisualization data={charts.healthByBu} />
       </Panel>
 
       <div className="grid gap-5">
@@ -529,7 +523,7 @@ function PmCapacity({ dashboard, rules, setRules }) {
     Math.max(charts.pmWorkloadTrend.length, 1);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard title="Total PM Active" value={charts.pmWorkloadTrend.length} icon={Users} tone="slate" />
         <KpiCard
@@ -556,7 +550,7 @@ function PmCapacity({ dashboard, rules, setRules }) {
         <PmPortfolioTable rows={charts.pmPortfolioSummary} workloadRows={charts.pmWorkloadTrend} months={months} workloadMode={workloadMode} />
       </Panel>
 
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
+      <div className="grid min-w-0 items-start gap-5 overflow-hidden xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
         <div className="space-y-5">
           <Panel title="Cost Exposure Trend sampai Desember" action={hasCostData ? "Rp" : "No Cost Data"}>
             {hasCostData ? (
@@ -575,15 +569,17 @@ function PmCapacity({ dashboard, rules, setRules }) {
                     ))}
                   </select>
                 </div>
-                <ResponsiveContainer width="100%" height={240}>
-                  <LineChart data={costTrendData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                    <YAxis width={76} tickFormatter={(value) => formatCurrency(value).replace("Rp ", "")} tickLine={false} axisLine={false} />
-                    <Tooltip content={<ChartTooltip currency />} />
-                    <Line type="monotone" dataKey="Cost Exposure" stroke="#0f172a" strokeWidth={2.8} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+                <div className="min-w-0 overflow-hidden">
+                  <ResponsiveContainer width="100%" height={240}>
+                    <LineChart data={costTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                      <YAxis width={76} tickFormatter={(value) => formatCurrency(value).replace("Rp ", "")} tickLine={false} axisLine={false} />
+                      <Tooltip content={<ChartTooltip currency />} />
+                      <Line type="monotone" dataKey="Cost Exposure" stroke="#0f172a" strokeWidth={2.8} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </>
             ) : (
               <MissingDataState
@@ -643,7 +639,7 @@ function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, 
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)] xl:flex-row xl:items-center xl:justify-between">
         <div className="grid flex-1 gap-3 md:grid-cols-4">
           <FilterSelect
@@ -796,6 +792,87 @@ function StackedHealthBars({ data }) {
   ));
 }
 
+function HealthByBuVisualization({ data }) {
+  return (
+    <>
+      <div className="md:hidden">
+        <HealthByBuList data={data} />
+      </div>
+      <div className="hidden md:block">
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <XAxis
+              dataKey="name"
+              tickLine={false}
+              axisLine={false}
+              interval={0}
+              tickFormatter={shortenBuLabel}
+            />
+            <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <StackedHealthBars data={data} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </>
+  );
+}
+
+function HealthByBuList({ data }) {
+  if (!data.length) {
+    return <MissingDataState compact title="Tidak ada data BU" description="Upload data portfolio untuk melihat distribusi health per BU." />;
+  }
+
+  return (
+    <div className="space-y-3">
+      {data.map((row) => {
+        const total = HEALTH_STACK_KEYS.reduce((sum, key) => sum + (row[key] || 0), 0);
+        return (
+          <div key={row.name} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <p className="min-w-0 flex-1 truncate text-sm font-bold text-slate-950" title={row.name}>
+                {row.name}
+              </p>
+              <p className="shrink-0 text-xs font-bold text-slate-500">{total} proyek</p>
+            </div>
+            <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-200">
+              {HEALTH_STACK_KEYS.map((key) => {
+                const value = row[key] || 0;
+                return value ? (
+                  <div
+                    key={key}
+                    className="h-full"
+                    style={{
+                      width: `${Math.max((value / Math.max(total, 1)) * 100, 2)}%`,
+                      backgroundColor: HEALTH_COLORS[key],
+                    }}
+                  />
+                ) : null;
+              })}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {HEALTH_STACK_KEYS.map((key) => (
+                <div key={key} className="min-w-0 rounded-lg bg-white px-2 py-2">
+                  <p className="truncate text-[10px] font-bold text-slate-500" title={key}>
+                    {HEALTH_SHORT_LABELS[key] || key}
+                  </p>
+                  <p className="mt-1 text-sm font-bold text-slate-950">{row[key] || 0}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function shortenBuLabel(value) {
+  const text = String(value || "");
+  return text.length > 18 ? `${text.slice(0, 16)}...` : text;
+}
+
 function getTopStackKey(row, keys) {
   for (let index = keys.length - 1; index >= 0; index -= 1) {
     const key = keys[index];
@@ -896,14 +973,17 @@ function RankedBars({ data, labelKey, valueKey, valueFormatter, maxValue }) {
         const value = item[valueKey] || 0;
         const width = Math.max(4, Math.min((value / Math.max(effectiveMax, 1)) * 100, 100));
         return (
-          <div key={item[labelKey]} className="grid grid-cols-[minmax(120px,190px)_1fr_auto] items-center gap-3">
+          <div
+            key={item[labelKey]}
+            className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(120px,190px)_1fr_auto] sm:gap-3"
+          >
             <p className="truncate text-sm font-semibold text-slate-700" title={item[labelKey]}>
               {item[labelKey]}
             </p>
-            <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+            <p className="text-right text-xs font-bold text-slate-600 sm:order-3 sm:min-w-16">{valueFormatter(value)}</p>
+            <div className="col-span-2 h-2.5 overflow-hidden rounded-full bg-slate-100 sm:order-2 sm:col-span-1">
               <div className="h-full rounded-full bg-slate-700" style={{ width: `${width}%` }} />
             </div>
-            <p className="min-w-16 text-right text-xs font-bold text-slate-600">{valueFormatter(value)}</p>
           </div>
         );
       })}
@@ -1034,17 +1114,17 @@ function WorkloadHeatmap({ rows, rules, projectCountMap, months, workloadMode = 
 
       <div className="grid gap-3 xl:hidden">
         {pagedRows.rows.map((pm) => (
-          <div key={pm.pm} className="rounded-xl border border-slate-100 bg-white p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+          <div key={pm.pm} className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-100 bg-white p-3">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold text-slate-950" title={pm.pm}>{pm.pm}</p>
                 <p className="mt-1 text-xs text-slate-500">{projectCountMap.get(pm.pm) || 0} proyek portfolio</p>
               </div>
-              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700">
+              <span className="max-w-[132px] shrink-0 truncate rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700 sm:max-w-none">
                 Peak {formatWorkloadValue(Math.max(...months.map((month) => pm[month.key] || 0)), workloadMode)}
               </span>
             </div>
-            <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+            <div className="mt-3 grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
               {months.map((month) => {
                 const value = pm[month.key] || 0;
                 return (
@@ -1141,15 +1221,17 @@ function PmPortfolioTable({ rows, workloadRows, months, workloadMode = "live" })
 
       <div className="grid gap-3 lg:hidden">
         {pagedRows.rows.map((pm) => (
-          <div key={pm.pm} className="rounded-xl border border-slate-100 bg-white p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+          <div key={pm.pm} className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-100 bg-white p-3">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold text-slate-950" title={pm.pm}>{pm.pm}</p>
                 <p className="mt-1 text-xs text-slate-500">{pm.projects} proyek portfolio</p>
               </div>
-              <p className="shrink-0 text-right text-sm font-bold text-slate-950">{formatCurrency(pm.costExposure)}</p>
+              <p className="max-w-[142px] shrink-0 truncate text-right text-sm font-bold text-slate-950 sm:max-w-none" title={formatCurrency(pm.costExposure)}>
+                {formatCurrency(pm.costExposure)}
+              </p>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="mt-3 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-4">
               <MetricChip label={avgLoadLabel} value={formatWorkloadValue(workloadMap.get(pm.pm) || 0, workloadMode, { decimals: 1 })} />
               <MetricChip label={peakLoadLabel} value={formatWorkloadValue(peakMap.get(pm.pm) || 0, workloadMode)} />
               <MetricChip label="Value At Risk" value={formatCurrency(pm.valueAtRisk)} tone="red" />
@@ -1227,19 +1309,21 @@ function ProjectTable({ projects, compact = false, workloadMode = "live" }) {
 
       <div className="grid gap-3 2xl:hidden">
         {pagedProjects.rows.map((project) => (
-          <div key={project.id} className="rounded-xl border border-slate-100 bg-white p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
+          <div key={project.id} className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-100 bg-white p-3">
+            <div className="flex min-w-0 items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <PriorityBadge priority={project.priority} />
-                  <span className="text-xs font-bold text-slate-500">{project.iwo}</span>
+                  <span className="min-w-0 max-w-[150px] truncate text-xs font-bold text-slate-500" title={project.iwo}>
+                    {project.iwo}
+                  </span>
                 </div>
                 <p className="mt-2 line-clamp-2 text-sm font-bold text-slate-950" title={project.project}>{project.project}</p>
                 <p className="mt-1 truncate text-xs text-slate-500" title={project.customer}>{project.customer}</p>
               </div>
-              <p className="shrink-0 max-w-[150px] truncate text-right text-xs font-bold text-slate-700" title={project.pm}>{project.pm}</p>
+              <p className="max-w-[96px] shrink-0 truncate text-right text-xs font-bold text-slate-700 sm:max-w-[150px]" title={project.pm}>{project.pm}</p>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="mt-3 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
               <StatusMetric label="Health" value={<StatusPill value={project.health} colorMap={HEALTH_COLORS} />} />
               <StatusMetric label="Due" value={<StatusPill value={project.dueStatus} colorMap={DUE_COLORS} />} />
               <MetricChip label="Schedule" value={project.schedule} />
@@ -1364,7 +1448,7 @@ function SortButton({ label, sortKey, sort, onSort, align = "left" }) {
   return (
     <button
       type="button"
-      className={`inline-flex w-full items-center gap-1 text-[11px] font-bold uppercase tracking-[0.05em] ${
+      className={`inline-flex min-w-0 w-full items-center gap-1 overflow-hidden text-[11px] font-bold uppercase tracking-[0.05em] ${
         align === "center" ? "justify-center" : "justify-start"
       } ${active ? "text-slate-950" : "text-slate-500 hover:text-slate-800"}`}
       onClick={() =>
@@ -1374,7 +1458,7 @@ function SortButton({ label, sortKey, sort, onSort, align = "left" }) {
         }))
       }
     >
-      <span>{label}</span>
+      <span className="min-w-0 truncate">{label}</span>
       <span className="text-[10px] leading-none">{direction === "asc" ? "^" : direction === "desc" ? "v" : "-"}</span>
     </button>
   );
