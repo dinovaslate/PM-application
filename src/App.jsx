@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   BarChart3,
+  Bot,
   BriefcaseBusiness,
   CalendarClock,
   CheckCircle2,
@@ -11,9 +12,12 @@ import {
   FileSpreadsheet,
   Filter,
   LineChart as LineChartIcon,
+  MessageCircle,
   Search,
+  Send,
   Settings2,
   Upload,
+  UserRound,
   Users,
   X,
 } from "lucide-react";
@@ -350,6 +354,7 @@ export default function App() {
         onReset={handleCustomizationReset}
         onToggle={handleCustomizationToggle}
       />
+      {projects.length ? <DashboardChatbot dashboard={dashboard} sourceName={sourceName} /> : null}
     </div>
   );
 }
@@ -664,6 +669,204 @@ function SmartInsights({ dashboard, sourceName }) {
       </div>
     </Panel>
   );
+}
+
+function DashboardChatbot({ dashboard, sourceName }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState(() => [createChatWelcomeMessage(dashboard)]);
+  const [draft, setDraft] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+  const chatEndpoint = getChatbotEndpoint();
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    setMessages([createChatWelcomeMessage(dashboard)]);
+    setDraft("");
+    setStatus("idle");
+    setError("");
+  }, [dashboard.kpis.totalProjects, sourceName]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    messagesEndRef.current?.scrollIntoView({ block: "end" });
+  }, [isOpen, messages, status]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    const question = draft.trim();
+    if (!question || status === "loading") return;
+
+    if (!chatEndpoint) {
+      setError("Chat Gemini belum aktif di deployment ini.");
+      return;
+    }
+
+    const userMessage = createChatMessage("user", question);
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
+    setDraft("");
+    setStatus("loading");
+    setError("");
+
+    try {
+      const response = await fetch(chatEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: question,
+          history: nextMessages
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .slice(-8)
+            .map(({ role, content }) => ({ role, content })),
+          snapshot: buildChatPayload(dashboard, sourceName),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Gagal menghubungi Gemini.");
+      setMessages((current) => [...current, createChatMessage("assistant", data.answer || "Gemini tidak mengembalikan jawaban.")]);
+      setStatus("ready");
+    } catch (err) {
+      setError(err.message || "Gagal menghubungi Gemini.");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <>
+      {!isOpen ? (
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="fixed bottom-4 right-4 z-40 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-bold text-white shadow-xl transition hover:bg-slate-800 sm:bottom-5 sm:right-5"
+          aria-label="Open Gemini PMO chat"
+        >
+          <MessageCircle size={18} />
+          <span className="hidden sm:inline">PMO Chat</span>
+        </button>
+      ) : null}
+
+      {isOpen ? (
+        <section className="fixed inset-x-3 bottom-3 z-40 flex max-h-[calc(100vh-1.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[620px] sm:w-[430px]">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">
+                <Bot size={18} />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-slate-950">Gemini PMO Chat</p>
+                <p className="text-[11px] font-semibold text-slate-500">{chatEndpoint ? "Gemini aktif" : "Proxy off"}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50"
+              aria-label="Close Gemini chat"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-4">
+            {messages.map((message) => (
+              <ChatBubble key={message.id} message={message} />
+            ))}
+            {status === "loading" ? (
+              <div className="flex items-start gap-2">
+                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
+                  <Bot size={14} />
+                </div>
+                <div className="rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-sm font-semibold text-slate-500 shadow-sm">
+                  Menganalisis data...
+                </div>
+              </div>
+            ) : null}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {error ? (
+            <div className="border-t border-amber-100 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
+              {error}
+            </div>
+          ) : null}
+
+          <form onSubmit={handleSubmit} className="border-t border-slate-200 bg-white p-3">
+            <div className="flex items-end gap-2">
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                rows={2}
+                maxLength={1200}
+                className="min-h-[44px] flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
+                placeholder="Tulis pertanyaan..."
+                aria-label="Pertanyaan untuk Gemini PMO Chat"
+                disabled={status === "loading"}
+              />
+              <button
+                type="submit"
+                disabled={!draft.trim() || status === "loading"}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Send chat message"
+              >
+                <Send size={17} />
+              </button>
+            </div>
+          </form>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
+function ChatBubble({ message }) {
+  const isUser = message.role === "user";
+  const Icon = isUser ? UserRound : Bot;
+  return (
+    <div className={`flex items-start gap-2 ${isUser ? "justify-end" : ""}`}>
+      {!isUser ? (
+        <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
+          <Icon size={14} />
+        </div>
+      ) : null}
+      <div
+        className={`max-w-[82%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm leading-6 shadow-sm ${
+          isUser
+            ? "rounded-tr-sm bg-slate-950 text-white"
+            : "rounded-tl-sm border border-slate-100 bg-white text-slate-700"
+        }`}
+      >
+        {message.content}
+      </div>
+      {isUser ? (
+        <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm">
+          <Icon size={14} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function createChatWelcomeMessage(dashboard) {
+  const { kpis } = dashboard;
+  return createChatMessage(
+    "assistant",
+    `Data ${kpis.totalProjects} proyek siap dianalisis. Health: ${kpis.healthy} sehat, ${kpis.warning} warning, ${kpis.needImprovement} need improvement, ${kpis.unknownHealth || 0} unknown.`,
+  );
+}
+
+function createChatMessage(role, content) {
+  return {
+    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    content,
+  };
 }
 
 function AiBriefCard({ brief }) {
@@ -2301,6 +2504,19 @@ function getAiInsightsEndpoint() {
   return "";
 }
 
+function getChatbotEndpoint() {
+  const configured = import.meta.env.VITE_CHATBOT_ENDPOINT;
+  if (configured) return configured;
+  if (typeof window === "undefined") return "";
+  const host = window.location.hostname;
+  if (host.endsWith(".vercel.app")) return "/api/chatbot";
+  if (host.endsWith(".netlify.app")) return "/.netlify/functions/chatbot";
+  if (import.meta.env.PROD && host !== "localhost" && host !== "127.0.0.1" && !host.includes("github.io")) {
+    return "/api/chatbot";
+  }
+  return "";
+}
+
 function buildAiBriefPayload(dashboard, sourceName) {
   const { kpis, charts, priorityProjects, pmRiskList } = dashboard;
   return {
@@ -2350,6 +2566,86 @@ function buildAiBriefPayload(dashboard, sourceName) {
         valueAtRisk: pm.valueAtRisk,
       })),
   };
+}
+
+function buildChatPayload(dashboard, sourceName) {
+  const { kpis, charts, projects, pmRiskList, troubledHighValueProjects } = dashboard;
+  const months = dashboard.months || MONTHS;
+  const workloadMode = dashboard.dataQuality?.workloadMode || "live";
+  const workloadLabels = getWorkloadMetricLabels(workloadMode);
+  const pmWorkloadByName = new Map(charts.pmWorkloadTrend.map((row) => [row.pm, row]));
+  const pmRiskByName = new Map(pmRiskList.map((row) => [row.pm, row]));
+
+  const pmPortfolioSummary = charts.pmPortfolioSummary.map((pm) => {
+    const workload = pmWorkloadByName.get(pm.pm) || {};
+    const risk = pmRiskByName.get(pm.pm) || {};
+    return {
+      pm: pm.pm,
+      projects: pm.projects,
+      costExposure: Math.round(pm.costExposure || 0),
+      portfolioValue: Math.round(pm.portfolioValue || 0),
+      valueAtRisk: Math.round(pm.valueAtRisk || 0),
+      riskyProjects: risk.riskyProjects || 0,
+      overdueProjects: risk.overdueProjects || 0,
+      averageActiveProjects: Number(averageMonthlyValue(workload, months).toFixed(2)),
+      peakActiveProjects: Number(Math.max(...months.map((month) => workload[month.key] || 0), 0).toFixed(2)),
+      decemberActiveProjects: workload.dec || 0,
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: sourceName,
+    kpis,
+    dataQuality: dashboard.dataQuality,
+    healthDistribution: charts.healthDistribution,
+    scheduleDistribution: charts.scheduleDistribution,
+    dueDistribution: countProjectRows(projects, "dueStatus"),
+    issueByType: charts.issueByType.slice(0, 12),
+    resourceDistribution: charts.resourceDistribution.slice(0, 10),
+    costDistribution: charts.costDistribution.slice(0, 10),
+    workloadTrend: toPortfolioWorkloadSeries(charts.pmWorkloadTrend, months, workloadLabels),
+    costTrend: toSelectedCostSeries(charts.pmCostTrend, months, "TOTAL").map((row) => ({
+      month: row.name,
+      costExposure: row["Cost Exposure"],
+    })),
+    pmPortfolioSummary,
+    pmRiskList,
+    topPriorityProjects: [...projects]
+      .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || (b.value || 0) - (a.value || 0))
+      .slice(0, 25)
+      .map(toChatProjectRow),
+    highValueProjects: troubledHighValueProjects.slice(0, 15).map(toChatProjectRow),
+  };
+}
+
+function toChatProjectRow(project) {
+  return {
+    priority: project.priority,
+    iwo: project.iwo,
+    project: project.project,
+    customer: project.customer,
+    pm: project.pm,
+    bu: project.bu,
+    health: project.health,
+    dueStatus: project.dueStatus,
+    schedule: project.schedule,
+    resource: project.resource,
+    costCondition: project.cost,
+    openIssue: project.openIssue,
+    value: Math.round(project.value || 0),
+    costAmount: Math.round(project.costAmount || 0),
+    activeProjectProxy: Number((project.currentWorkload || 0).toFixed(2)),
+  };
+}
+
+function countProjectRows(projects, field) {
+  const map = new Map();
+  projects.forEach((project) => {
+    const key = project[field] || "Unknown";
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
 }
 
 function isHealthRisk(health) {
