@@ -125,7 +125,8 @@ const tabs = [
 
 const CUSTOMIZATION_STORAGE_KEY = "pmo-dashboard-customization-v1";
 const CUSTOM_CHARTS_STORAGE_KEY = "pmo-dashboard-custom-charts-v1";
-const MAX_CUSTOM_CHARTS = 6;
+const MAX_CUSTOM_CHARTS = 16;
+const MAX_CUSTOM_CHARTS_PER_GROUP = 4;
 
 const CUSTOMIZATION_GROUPS = [
   {
@@ -275,12 +276,20 @@ export default function App() {
 
   function handleAddCustomChart(chartSpec) {
     setCustomCharts((current) => {
+      const placement = chartSpec.placement || "overview";
       const nextChart = {
         ...chartSpec,
+        placement,
         id: chartSpec.id || `chart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         createdAt: chartSpec.createdAt || new Date().toISOString(),
       };
-      return [nextChart, ...current.filter((chart) => chart.id !== nextChart.id)].slice(0, MAX_CUSTOM_CHARTS);
+      const withoutDuplicate = current.filter((chart) => chart.id !== nextChart.id);
+      const sameGroup = [nextChart, ...withoutDuplicate.filter((chart) => getCustomChartPlacement(chart) === placement)].slice(
+        0,
+        MAX_CUSTOM_CHARTS_PER_GROUP,
+      );
+      const otherGroups = withoutDuplicate.filter((chart) => getCustomChartPlacement(chart) !== placement);
+      return [...sameGroup, ...otherGroups].slice(0, MAX_CUSTOM_CHARTS);
     });
   }
 
@@ -571,56 +580,50 @@ function CustomizationPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="space-y-5">
-            {canCustomizeGraphs ? (
-              <CustomGraphStudio
-                dashboard={dashboard}
-                sourceName={sourceName}
-                customCharts={customCharts}
-                onAddCustomChart={onAddCustomChart}
-                onRemoveCustomChart={onRemoveCustomChart}
-              />
-            ) : (
-              <section className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
-                Upload Excel dulu untuk membuat custom Gemini graph.
-              </section>
-            )}
-
             {groups.map((group) => {
               const visibleCount = group.options.filter((option) => customization[option.id] !== false).length;
               return (
-                <div key={group.id} className="space-y-5">
-                  <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold text-slate-950">{group.title}</p>
-                        <p className="text-xs text-slate-500">{visibleCount} dari {group.options.length} aktif</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => onReset(group.id)}
-                        className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
-                      >
-                        Reset
-                      </button>
+                <section key={group.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-slate-950">{group.title}</p>
+                      <p className="text-xs text-slate-500">{visibleCount} dari {group.options.length} aktif</p>
                     </div>
-                    <div className="space-y-2">
-                      {group.options.map((option) => {
-                        const checked = customization[option.id] !== false;
-                        return (
-                          <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
-                            <span className="min-w-0 font-semibold text-slate-700">{option.label}</span>
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 shrink-0 accent-slate-950"
-                              checked={checked}
-                              onChange={(event) => onToggle(option.id, event.target.checked)}
-                            />
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </section>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => onReset(group.id)}
+                      className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {group.options.map((option) => {
+                      const checked = customization[option.id] !== false;
+                      return (
+                        <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+                          <span className="min-w-0 font-semibold text-slate-700">{option.label}</span>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 shrink-0 accent-slate-950"
+                            checked={checked}
+                            onChange={(event) => onToggle(option.id, event.target.checked)}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <CustomGraphStudio
+                    groupId={group.id}
+                    groupTitle={group.title}
+                    disabled={!canCustomizeGraphs}
+                    dashboard={dashboard}
+                    sourceName={sourceName}
+                    customCharts={customCharts}
+                    onAddCustomChart={onAddCustomChart}
+                    onRemoveCustomChart={onRemoveCustomChart}
+                  />
+                </section>
               );
             })}
           </div>
@@ -732,23 +735,28 @@ function SmartInsights({ dashboard, sourceName }) {
   );
 }
 
-function CustomGraphStudio({ dashboard, sourceName, customCharts = [], onAddCustomChart, onRemoveCustomChart }) {
+function CustomGraphStudio({
+  groupId,
+  groupTitle,
+  disabled = false,
+  dashboard,
+  sourceName,
+  customCharts = [],
+  onAddCustomChart,
+  onRemoveCustomChart,
+}) {
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [lastAnswer, setLastAnswer] = useState("");
   const chatEndpoint = getChatbotEndpoint();
-  const quickPrompts = [
-    "Grafik cost exposure per PM",
-    "Tren total cost sampai Desember",
-    "Distribusi health project",
-    "PM dengan proyek risky terbanyak",
-  ];
+  const quickPrompts = getCustomGraphPrompts(groupId);
+  const groupCharts = customCharts.filter((chart) => getCustomChartPlacement(chart) === groupId);
 
   async function handleGenerateSpec(event) {
     event.preventDefault();
     const request = prompt.trim();
-    if (!request || status === "loading") return;
+    if (!request || status === "loading" || disabled) return;
     if (!chatEndpoint) {
       setError("Gemini proxy belum aktif di deployment ini.");
       return;
@@ -775,6 +783,7 @@ function CustomGraphStudio({ dashboard, sourceName, customCharts = [], onAddCust
 
       onAddCustomChart({
         ...data.chartSpec,
+        placement: groupId,
         prompt: request,
         answer: data.answer || "",
       });
@@ -788,105 +797,100 @@ function CustomGraphStudio({ dashboard, sourceName, customCharts = [], onAddCust
   }
 
   return (
-    <Panel title="Custom Gemini Graphs" action={`${customCharts.length}/${MAX_CUSTOM_CHARTS} saved`}>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <form onSubmit={handleGenerateSpec} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 p-3">
-          <div className="flex items-start gap-3">
-            <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">
-              <Bot size={16} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-slate-950">Generate reusable graph spec</p>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                Gemini dipakai saat tombol generate diklik. Setelah itu chart dihitung ulang lokal dari Excel aktif.
-              </p>
-            </div>
-          </div>
-
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            rows={3}
-            maxLength={400}
-            className="mt-3 min-h-[92px] w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-5 text-slate-800 outline-none transition focus:border-slate-400"
-            placeholder="Contoh: tampilkan 10 PM dengan cost exposure terbesar"
-            disabled={status === "loading"}
-          />
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {quickPrompts.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setPrompt(item)}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100"
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-
-          {error ? (
-            <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-              {error}
-            </div>
-          ) : null}
-          {lastAnswer ? (
-            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">
-              {lastAnswer}
-            </div>
-          ) : null}
-
-          <button
-            type="submit"
-            disabled={!prompt.trim() || status === "loading" || !chatEndpoint}
-            className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-          >
-            <BarChart3 size={16} />
-            {status === "loading" ? "Generating..." : "Generate Graph Spec"}
-          </button>
-        </form>
-
+    <div className="mt-4 border-t border-slate-200 pt-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          {customCharts.length ? (
-            <div className="grid min-w-0 gap-3">
-              {customCharts.map((chartSpec) => (
-                <CustomChartCard
-                  key={chartSpec.id}
-                  chartSpec={chartSpec}
-                  dashboard={dashboard}
-                  onRemove={() => onRemoveCustomChart(chartSpec.id)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="flex min-h-[260px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center">
-              <div className="max-w-sm">
-                <BarChart3 className="mx-auto text-slate-400" size={26} />
-                <p className="mt-3 text-sm font-bold text-slate-900">Belum ada custom graph</p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Buat satu spec dari Gemini, lalu graph ini akan reuse data dashboard lokal setiap upload Excel baru.
-                </p>
-              </div>
-            </div>
-          )}
+          <p className="text-xs font-bold uppercase tracking-[0.05em] text-slate-500">Custom graph</p>
+          <p className="mt-0.5 truncate text-[11px] font-semibold text-slate-500">
+            {disabled ? "Upload Excel dulu" : `Untuk ${groupTitle}`}
+          </p>
         </div>
+        <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-slate-500">
+          {groupCharts.length}/{MAX_CUSTOM_CHARTS_PER_GROUP}
+        </span>
       </div>
-    </Panel>
+
+      <form onSubmit={handleGenerateSpec} className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+        <div className="flex items-start gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white">
+            <Bot size={14} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              rows={2}
+              maxLength={360}
+              className="min-h-[48px] w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
+              placeholder="Contoh: top PM by cost"
+              disabled={status === "loading" || disabled}
+            />
+          </div>
+        </div>
+
+        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
+          {quickPrompts.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setPrompt(item)}
+              className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-100"
+              disabled={status === "loading" || disabled}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+
+        {error ? (
+          <div className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800">
+            {error}
+          </div>
+        ) : null}
+        {lastAnswer ? (
+          <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[11px] leading-5 text-blue-800">
+            {lastAnswer}
+          </div>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={!prompt.trim() || status === "loading" || !chatEndpoint || disabled}
+          className="mt-2 inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <BarChart3 size={14} />
+          {status === "loading" ? "Generating..." : "Generate"}
+        </button>
+      </form>
+
+      {groupCharts.length ? (
+        <div className="mt-2 space-y-2">
+          {groupCharts.map((chartSpec) => (
+            <CustomChartCard
+              key={chartSpec.id}
+              chartSpec={chartSpec}
+              dashboard={dashboard}
+              compact
+              onRemove={() => onRemoveCustomChart(chartSpec.id)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-function CustomChartCard({ chartSpec, dashboard, onRemove }) {
+function CustomChartCard({ chartSpec, dashboard, onRemove, compact = false }) {
   const chart = useMemo(() => materializeCustomChart(chartSpec, dashboard), [chartSpec, dashboard]);
 
   return (
-    <div className="motion-chart-card min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
+    <div className="motion-chart-card min-w-0 rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
+      <div className="mb-2 flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-slate-950" title={chartSpec.title}>
+          <p className="truncate text-xs font-bold text-slate-950" title={chartSpec.title}>
             {chartSpec.title}
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">
               {chartSpec.dataset}
             </span>
@@ -898,21 +902,21 @@ function CustomChartCard({ chartSpec, dashboard, onRemove }) {
         <button
           type="button"
           onClick={onRemove}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
           aria-label="Remove custom graph"
         >
           <X size={14} />
         </button>
       </div>
 
-      {chartSpec.description ? (
+      {!compact && chartSpec.description ? (
         <p className="mb-3 text-xs leading-5 text-slate-500">{chartSpec.description}</p>
       ) : null}
 
       {chart ? (
-        <GeneratedChartCanvas chart={chart} height={270} />
+        <GeneratedChartCanvas chart={chart} height={compact ? 150 : 270} dense={compact} showLegend={!compact} />
       ) : (
-        <div className="flex min-h-[220px] items-center justify-center rounded-lg bg-slate-50 px-4 text-center text-xs leading-5 text-slate-500">
+        <div className={`flex items-center justify-center rounded-lg bg-slate-50 px-3 text-center text-xs leading-5 text-slate-500 ${compact ? "min-h-[120px]" : "min-h-[220px]"}`}>
           Spec ini belum cocok dengan dataset upload saat ini. Generate spec baru atau cek field Excel yang tersedia.
         </div>
       )}
@@ -1217,7 +1221,7 @@ function ChatChart({ chart }) {
   );
 }
 
-function GeneratedChartCanvas({ chart, height = 260 }) {
+function GeneratedChartCanvas({ chart, height = 260, dense = false, showLegend = true }) {
   const xKey = chart.xKey || "name";
   const series = Array.isArray(chart.series) ? chart.series : [];
   const data = Array.isArray(chart.data) ? chart.data : [];
@@ -1227,12 +1231,18 @@ function GeneratedChartCanvas({ chart, height = 260 }) {
     <div className="w-full min-w-0" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         {chart.type === "line" ? (
-          <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+          <LineChart data={data} margin={{ top: 8, right: dense ? 4 : 8, left: 0, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-            <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-            <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={dense ? false : { fontSize: 11 }} height={dense ? 8 : 30} />
+            <YAxis
+              width={dense ? 42 : 60}
+              tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: dense ? 10 : 11 }}
+            />
             <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {showLegend ? <Legend wrapperStyle={{ fontSize: 11 }} /> : null}
             {series.map((item, index) => (
               <Line
                 key={item.key}
@@ -1246,12 +1256,18 @@ function GeneratedChartCanvas({ chart, height = 260 }) {
             ))}
           </LineChart>
         ) : (
-          <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+          <BarChart data={data} margin={{ top: 8, right: dense ? 4 : 8, left: 0, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-            <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-            <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={dense ? false : { fontSize: 11 }} height={dense ? 8 : 30} />
+            <YAxis
+              width={dense ? 42 : 60}
+              tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: dense ? 10 : 11 }}
+            />
             <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {showLegend ? <Legend wrapperStyle={{ fontSize: 11 }} /> : null}
             {series.map((item, index) => (
               <Bar
                 key={item.key}
@@ -2977,10 +2993,30 @@ function loadCustomCharts() {
   if (typeof window === "undefined") return [];
   try {
     const stored = JSON.parse(window.localStorage.getItem(CUSTOM_CHARTS_STORAGE_KEY) || "[]");
-    return Array.isArray(stored) ? stored.filter((chart) => chart?.id && chart?.dataset).slice(0, MAX_CUSTOM_CHARTS) : [];
+    return Array.isArray(stored)
+      ? stored
+          .filter((chart) => chart?.id && chart?.dataset)
+          .map((chart) => ({ ...chart, placement: getCustomChartPlacement(chart) }))
+          .slice(0, MAX_CUSTOM_CHARTS)
+      : [];
   } catch {
     return [];
   }
+}
+
+function getCustomChartPlacement(chart) {
+  const placement = chart?.placement || chart?.groupId || "overview";
+  return CUSTOMIZATION_GROUPS.some((group) => group.id === placement) ? placement : "overview";
+}
+
+function getCustomGraphPrompts(groupId) {
+  const prompts = {
+    overview: ["Health distribution", "Cost exposure per PM", "Workload trend", "Due status"],
+    health: ["Health by BU", "Schedule distribution", "Issue by type", "High value risk"],
+    capacity: ["Top PM by cost", "PM workload trend", "Project count by PM", "Risky PMs"],
+    priority: ["Top priority by value", "Open issue projects", "Overdue projects", "Cost by priority"],
+  };
+  return prompts[groupId] || prompts.overview;
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
