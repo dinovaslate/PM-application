@@ -53,6 +53,7 @@ export async function handler(event) {
   }
 
   const history = sanitizeHistory(payload.history);
+  const mode = payload.mode === "chart" ? "chart" : "chat";
   let image = null;
   try {
     image = sanitizeImage(payload.image);
@@ -72,7 +73,7 @@ export async function handler(event) {
         model,
         store: false,
         system_instruction: SYSTEM_PROMPT,
-        input: buildChatInput(snapshotText, history, question, image),
+        input: buildChatInput(snapshotText, history, question, image, mode),
         generation_config: {
           temperature: 0.25,
           thinking_level: "low",
@@ -92,13 +93,15 @@ export async function handler(event) {
       );
     }
 
-    const answer = normalizeAnswer(extractOutputText(upstreamBody));
+    const outputText = extractOutputText(upstreamBody);
+    const { answer, chart } = mode === "chart" ? parseChartResponse(outputText) : { answer: normalizeAnswer(outputText), chart: null };
     return jsonResponse(
       200,
       {
         provider: "gemini",
         model,
         answer,
+        chart,
       },
       headers,
     );
@@ -107,10 +110,14 @@ export async function handler(event) {
   }
 }
 
-function buildChatInput(snapshotText, history, question, image) {
+function buildChatInput(snapshotText, history, question, image, mode) {
   const conversation = history.length
     ? history.map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.content}`).join("\n")
     : "No prior conversation.";
+  const answerRules =
+    mode === "chart"
+      ? 'Return valid compact JSON only. Schema: {"answer":"short Indonesian explanation","chart":{"title":"string","type":"bar|line","xKey":"name","series":[{"key":"string","label":"string"}],"data":[{"name":"string","Series Key":123}],"valueFormat":"currency|count|number|percent"}}. Use only data from the snapshot. Limit data to 12 rows and 3 series. No markdown fences.'
+      : "Answer rules: Indonesian only. Keep the answer under 8 short bullet points or 2 short paragraphs. Mention exact numbers when available. Do not invent project details outside the snapshot. Prefer clean plain Markdown bullets and bold labels when useful.";
 
   const prompt = [
     "Dashboard snapshot:",
@@ -122,7 +129,7 @@ function buildChatInput(snapshotText, history, question, image) {
     `User question: ${question}`,
     image ? `Attached image: ${image.name || "image"} (${image.mime_type}). Use it together with the dashboard snapshot.` : "",
     "",
-    "Answer rules: Indonesian only. Keep the answer under 8 short bullet points or 2 short paragraphs. Mention exact numbers when available. Do not invent project details outside the snapshot. Prefer clean plain Markdown bullets and bold labels when useful.",
+    answerRules,
   ]
     .filter(Boolean)
     .join("\n");
@@ -253,6 +260,65 @@ function collectTextContent(content, chunks) {
 function normalizeAnswer(answer) {
   const text = String(answer || "").trim();
   return text || "Gemini tidak mengembalikan jawaban.";
+}
+
+function parseChartResponse(text) {
+  const fallback = { answer: normalizeAnswer(text), chart: null };
+  if (!text) return fallback;
+
+  const raw = String(text).trim();
+  const jsonText = raw.startsWith("{") ? raw : raw.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonText) return fallback;
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    return {
+      answer: normalizeAnswer(parsed.answer || parsed.summary || ""),
+      chart: normalizeChart(parsed.chart),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeChart(chart) {
+  if (!chart || typeof chart !== "object") return null;
+  const type = chart.type === "line" ? "line" : "bar";
+  const xKey = String(chart.xKey || "name").slice(0, 40);
+  const series = Array.isArray(chart.series)
+    ? chart.series
+        .slice(0, 3)
+        .map((item) => ({
+          key: String(item.key || item.label || "").slice(0, 80),
+          label: String(item.label || item.key || "").slice(0, 80),
+        }))
+        .filter((item) => item.key)
+    : [];
+  const data = Array.isArray(chart.data)
+    ? chart.data.slice(0, 12).map((row) => normalizeChartRow(row, xKey, series))
+    : [];
+
+  if (!series.length || !data.length) return null;
+
+  return {
+    title: String(chart.title || "Generated Chart").slice(0, 120),
+    type,
+    xKey,
+    series,
+    data,
+    valueFormat: ["currency", "count", "number", "percent"].includes(chart.valueFormat) ? chart.valueFormat : "number",
+  };
+}
+
+function normalizeChartRow(row, xKey, series) {
+  const normalized = {
+    [xKey]: String(row?.[xKey] ?? row?.name ?? row?.month ?? "").slice(0, 80),
+  };
+  series.forEach((item) => {
+    const value = Number(row?.[item.key]);
+    normalized[item.key] = Number.isFinite(value) ? value : 0;
+  });
+  return normalized;
 }
 
 function getCorsHeaders(origin) {

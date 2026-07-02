@@ -27,6 +27,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -716,6 +717,7 @@ function DashboardChatbot({ dashboard, sourceName }) {
     if (imageInputRef.current) imageInputRef.current.value = "";
     setStatus("loading");
     setError("");
+    const responseMode = shouldRequestChart(question) ? "chart" : "chat";
 
     try {
       const response = await fetch(chatEndpoint, {
@@ -723,6 +725,7 @@ function DashboardChatbot({ dashboard, sourceName }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: question,
+          mode: responseMode,
           history: nextMessages
             .filter((message) => message.role === "user" || message.role === "assistant")
             .slice(-8)
@@ -742,7 +745,10 @@ function DashboardChatbot({ dashboard, sourceName }) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Gagal menghubungi Gemini.");
-      setMessages((current) => [...current, createChatMessage("assistant", data.answer || "Gemini tidak mengembalikan jawaban.")]);
+      setMessages((current) => [
+        ...current,
+        createChatMessage("assistant", data.answer || "Gemini tidak mengembalikan jawaban.", null, data.chart || null),
+      ]);
       setStatus("ready");
     } catch (err) {
       setError(err.message || "Gagal menghubungi Gemini.");
@@ -936,6 +942,7 @@ function ChatBubble({ message }) {
           <img src={message.image.previewUrl} alt={message.image.name} className="mb-2 max-h-48 w-full rounded-xl object-cover" />
         ) : null}
         <FormattedChatContent text={message.content} />
+        {message.chart ? <ChatChart chart={message.chart} /> : null}
       </div>
       {isUser ? (
         <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm">
@@ -944,6 +951,82 @@ function ChatBubble({ message }) {
       ) : null}
     </div>
   );
+}
+
+function ChatChart({ chart }) {
+  const xKey = chart.xKey || "name";
+  const series = Array.isArray(chart.series) ? chart.series : [];
+  const data = Array.isArray(chart.data) ? chart.data : [];
+  if (!series.length || !data.length) return null;
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+      <p className="mb-2 text-xs font-bold text-slate-900">{chart.title || "Generated Chart"}</p>
+      <div className="h-60 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          {chart.type === "line" ? (
+            <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {series.map((item, index) => (
+                <Line
+                  key={item.key}
+                  type="monotone"
+                  dataKey={item.key}
+                  name={item.label || item.key}
+                  stroke={linePalette[index % linePalette.length]}
+                  strokeWidth={2.4}
+                  dot={false}
+                />
+              ))}
+            </LineChart>
+          ) : (
+            <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {series.map((item, index) => (
+                <Bar
+                  key={item.key}
+                  dataKey={item.key}
+                  name={item.label || item.key}
+                  fill={linePalette[index % linePalette.length]}
+                  radius={[5, 5, 0, 0]}
+                />
+              ))}
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function formatChatChartValue(value, valueFormat = "number", compact = false) {
+  const number = Number(value || 0);
+  if (valueFormat === "currency") return compact ? compactCurrency(number) : formatCurrency(number);
+  if (valueFormat === "percent") return `${Math.round(number * 100)}%`;
+  if (valueFormat === "count") return compact ? String(Math.round(number)) : `${new Intl.NumberFormat("id-ID").format(Math.round(number))} proyek`;
+  return compact ? compactNumber(number) : new Intl.NumberFormat("id-ID").format(number);
+}
+
+function compactCurrency(value) {
+  if (value >= 1_000_000_000_000) return `Rp ${(value / 1_000_000_000_000).toFixed(1)} T`;
+  if (value >= 1_000_000_000) return `Rp ${(value / 1_000_000_000).toFixed(0)} M`;
+  if (value >= 1_000_000) return `Rp ${(value / 1_000_000).toFixed(0)} Jt`;
+  return `Rp ${Math.round(value)}`;
+}
+
+function compactNumber(value) {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(Math.round(value));
 }
 
 function FormattedChatContent({ text }) {
@@ -1056,12 +1139,13 @@ function createChatWelcomeMessage(dashboard) {
   );
 }
 
-function createChatMessage(role, content, image = null) {
+function createChatMessage(role, content, image = null, chart = null) {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     content,
     image,
+    chart,
   };
 }
 
@@ -1076,6 +1160,13 @@ function formatBytes(bytes) {
   if (!bytes) return "0 KB";
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(bytes / 1000))} KB`;
+}
+
+function shouldRequestChart(text) {
+  const normalized = String(text || "").toLowerCase();
+  return ["graph", "grafik", "chart", "diagram", "plot", "visualisasi", "visual", "gambar"].some((keyword) =>
+    normalized.includes(keyword),
+  );
 }
 
 function AiBriefCard({ brief }) {
