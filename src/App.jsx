@@ -376,6 +376,8 @@ export default function App() {
               isWidgetVisible={isWidgetVisible}
               onOpenCustomize={() => setIsCustomizeOpen(true)}
               sourceName={sourceName}
+              customCharts={customCharts}
+              onRemoveCustomChart={handleRemoveCustomChart}
             />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
@@ -930,6 +932,29 @@ function CustomChartCard({ chartSpec, dashboard, onRemove, compact = false }) {
         </div>
       )}
     </div>
+  );
+}
+
+function CustomDashboardCharts({ tabId, dashboard, customCharts = [], onRemoveCustomChart }) {
+  const tabCharts = getCustomChartsForTab(customCharts, tabId);
+  if (!tabCharts.length) return null;
+
+  return (
+    <Panel title="Custom Graphs" action={`${tabCharts.length} saved`}>
+      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+        {tabCharts.map((chartSpec) => (
+          <CustomChartCard
+            key={chartSpec.id}
+            chartSpec={chartSpec}
+            dashboard={dashboard}
+            onRemove={() => onRemoveCustomChart(chartSpec.id)}
+          />
+        ))}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        Graph ini memakai spec tersimpan dari Gemini, lalu dihitung ulang lokal dari Excel aktif.
+      </p>
+    </Panel>
   );
 }
 
@@ -1488,7 +1513,7 @@ function AiBriefCard({ brief }) {
   );
 }
 
-function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName }) {
+function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName, customCharts = [], onRemoveCustomChart }) {
   const { kpis, charts, priorityProjects } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -1507,7 +1532,8 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, source
   const showHealthByBu = isWidgetVisible("overview.section.healthByBu");
   const showWorkloadTrend = isWidgetVisible("overview.section.workloadTrend");
   const showPriorityProjects = isWidgetVisible("overview.section.priorityProjects");
-  const hasVisibleWidgets = kpiCards.length || showInsights || showHealthByBu || showWorkloadTrend || showPriorityProjects;
+  const tabCustomCharts = getCustomChartsForTab(customCharts, "overview");
+  const hasVisibleWidgets = kpiCards.length || showInsights || showHealthByBu || showWorkloadTrend || showPriorityProjects || tabCustomCharts.length;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -1557,12 +1583,19 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, source
         </Panel>
       ) : null}
 
+      <CustomDashboardCharts
+        tabId="overview"
+        dashboard={dashboard}
+        customCharts={customCharts}
+        onRemoveCustomChart={onRemoveCustomChart}
+      />
+
       {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
 
-function ProjectHealthAnalysis({ dashboard, isWidgetVisible, onOpenCustomize }) {
+function ProjectHealthAnalysis({ dashboard, isWidgetVisible, onOpenCustomize, customCharts = [], onRemoveCustomChart }) {
   const { charts, troubledHighValueProjects, projects } = dashboard;
   const scheduleTotal = charts.scheduleDistribution.reduce((sum, item) => sum + item.value, 0);
   const scheduleMap = Object.fromEntries(charts.scheduleDistribution.map((item) => [item.name, item.value]));
@@ -1581,7 +1614,8 @@ function ProjectHealthAnalysis({ dashboard, isWidgetVisible, onOpenCustomize }) 
   const showHealthByBu = isWidgetVisible("health.section.healthByBu");
   const showHighValue = isWidgetVisible("health.section.highValue");
   const showDetail = isWidgetVisible("health.section.detail");
-  const hasVisibleWidgets = showSchedule || showIssues || showConditions || showHealthByBu || showHighValue || showDetail;
+  const tabCustomCharts = getCustomChartsForTab(customCharts, "health");
+  const hasVisibleWidgets = showSchedule || showIssues || showConditions || showHealthByBu || showHighValue || showDetail || tabCustomCharts.length;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -1677,12 +1711,19 @@ function ProjectHealthAnalysis({ dashboard, isWidgetVisible, onOpenCustomize }) 
         </div>
       ) : null}
 
+      <CustomDashboardCharts
+        tabId="health"
+        dashboard={dashboard}
+        customCharts={customCharts}
+        onRemoveCustomChart={onRemoveCustomChart}
+      />
+
       {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
 
-function PmCapacity({ dashboard, rules, setRules, isWidgetVisible, onOpenCustomize }) {
+function PmCapacity({ dashboard, rules, setRules, isWidgetVisible, onOpenCustomize, customCharts = [], onRemoveCustomChart }) {
   const { charts, pmRiskList } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -1728,7 +1769,8 @@ function PmCapacity({ dashboard, rules, setRules, isWidgetVisible, onOpenCustomi
   const showRiskyPm = isWidgetVisible("capacity.section.riskyPm");
   const showLowerLeft = showCostTrend || showPmStatus || showRules;
   const showLowerRight = showTopProjectCount || showWorkloadByBu || showRiskyPm;
-  const hasVisibleWidgets = kpiCards.length || showWorkloadForecast || showPmPortfolio || showLowerLeft || showLowerRight;
+  const tabCustomCharts = getCustomChartsForTab(customCharts, "capacity");
+  const hasVisibleWidgets = kpiCards.length || showWorkloadForecast || showPmPortfolio || showLowerLeft || showLowerRight || tabCustomCharts.length;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -1858,17 +1900,25 @@ function PmCapacity({ dashboard, rules, setRules, isWidgetVisible, onOpenCustomi
         </div>
       ) : null}
 
+      <CustomDashboardCharts
+        tabId="capacity"
+        dashboard={dashboard}
+        customCharts={customCharts}
+        onRemoveCustomChart={onRemoveCustomChart}
+      />
+
       {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
 
-function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, filterOptions, rules, setRules, isWidgetVisible, onOpenCustomize }) {
+function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, filterOptions, rules, setRules, isWidgetVisible, onOpenCustomize, customCharts = [], onRemoveCustomChart }) {
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
   const showFilters = isWidgetVisible("priority.section.filters");
   const showActionItems = isWidgetVisible("priority.section.actionItems");
   const showRules = isWidgetVisible("priority.section.rules");
-  const hasVisibleWidgets = showFilters || showActionItems || showRules;
+  const tabCustomCharts = getCustomChartsForTab(customCharts, "priority");
+  const hasVisibleWidgets = showFilters || showActionItems || showRules || tabCustomCharts.length;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -1916,11 +1966,18 @@ function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, 
           ) : null}
           {showRules ? <RulePanel rules={rules} setRules={setRules} /> : null}
         </div>
-      ) : null}
+        ) : null}
 
-      {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
-    </div>
-  );
+        <CustomDashboardCharts
+          tabId="priority"
+          dashboard={dashboard}
+          customCharts={customCharts}
+          onRemoveCustomChart={onRemoveCustomChart}
+        />
+
+        {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
+      </div>
+    );
 }
 
 function RulePanel({ rules, setRules }) {
@@ -3016,6 +3073,10 @@ function loadCustomCharts() {
 function getCustomChartPlacement(chart) {
   const placement = chart?.placement || chart?.groupId || "overview";
   return CUSTOMIZATION_GROUPS.some((group) => group.id === placement) ? placement : "overview";
+}
+
+function getCustomChartsForTab(customCharts = [], tabId) {
+  return customCharts.filter((chart) => getCustomChartPlacement(chart) === tabId);
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
