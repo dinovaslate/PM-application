@@ -801,7 +801,7 @@ function DashboardChatbot({ dashboard, sourceName }) {
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-4 right-4 z-40 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-bold text-white shadow-xl transition hover:bg-slate-800 sm:bottom-5 sm:right-5"
+          className="motion-chat-button fixed bottom-4 right-4 z-40 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-bold text-white shadow-xl transition hover:-translate-y-0.5 hover:bg-slate-800 sm:bottom-5 sm:right-5"
           aria-label="Open Gemini PMO chat"
         >
           <MessageCircle size={18} />
@@ -810,7 +810,7 @@ function DashboardChatbot({ dashboard, sourceName }) {
       ) : null}
 
       {isOpen ? (
-        <section className="fixed inset-x-3 bottom-3 z-40 flex max-h-[calc(100vh-1.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[620px] sm:w-[430px]">
+        <section className="motion-chat-panel fixed inset-x-3 bottom-3 z-40 flex max-h-[calc(100vh-1.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[620px] sm:w-[430px]">
           <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">
@@ -836,12 +836,17 @@ function DashboardChatbot({ dashboard, sourceName }) {
               <ChatBubble key={message.id} message={message} />
             ))}
             {status === "loading" ? (
-              <div className="flex items-start gap-2">
+              <div className="motion-chat-bubble flex items-start gap-2">
                 <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
                   <Bot size={14} />
                 </div>
                 <div className="rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-sm font-semibold text-slate-500 shadow-sm">
-                  Menganalisis data...
+                  <span className="inline-flex items-center gap-1">
+                    <span>Menganalisis data</span>
+                    <span className="typing-dot h-1.5 w-1.5 rounded-full bg-slate-400" />
+                    <span className="typing-dot typing-dot-delay-1 h-1.5 w-1.5 rounded-full bg-slate-400" />
+                    <span className="typing-dot typing-dot-delay-2 h-1.5 w-1.5 rounded-full bg-slate-400" />
+                  </span>
                 </div>
               </div>
             ) : null}
@@ -925,7 +930,7 @@ function ChatBubble({ message }) {
   const isUser = message.role === "user";
   const Icon = isUser ? UserRound : Bot;
   return (
-    <div className={`flex items-start gap-2 ${isUser ? "justify-end" : ""}`}>
+    <div className={`motion-chat-bubble flex items-start gap-2 ${isUser ? "justify-end" : ""}`}>
       {!isUser ? (
         <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
           <Icon size={14} />
@@ -960,7 +965,7 @@ function ChatChart({ chart }) {
   if (!series.length || !data.length) return null;
 
   return (
-    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+    <div className="motion-chart-card mt-3 rounded-xl border border-slate-200 bg-white p-3">
       <p className="mb-2 text-xs font-bold text-slate-900">{chart.title || "Generated Chart"}</p>
       <div className="h-60 w-full">
         <ResponsiveContainer width="100%" height="100%">
@@ -1693,7 +1698,7 @@ function KpiCard({ title, value, icon: Icon, tone }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)]">
+    <div className="motion-enter rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_18px_-8px_rgb(15_23_42_/_0.25)]">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[10px] font-bold uppercase tracking-[0.05em] text-slate-500">{title}</p>
         <div className={`rounded-lg p-2 ${tones[tone]}`}>
@@ -1707,7 +1712,7 @@ function KpiCard({ title, value, icon: Icon, tone }) {
 
 function Panel({ title, action, children }) {
   return (
-    <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)]">
+    <section className="motion-enter-soft min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)] transition duration-200 hover:shadow-[0_10px_20px_-12px_rgb(15_23_42_/_0.28)]">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-sm font-bold text-slate-950">{title}</h2>
         {action ? <span className="text-[11px] font-semibold text-slate-500">{action}</span> : null}
