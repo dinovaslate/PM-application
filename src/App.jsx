@@ -873,20 +873,6 @@ function CustomGraphStudio({
           {status === "loading" ? "Generating..." : isPromptOpen ? "Add graph" : "Add custom graph"}
         </button>
       </form>
-
-      {groupCharts.length ? (
-        <div className="mt-2 space-y-2">
-          {groupCharts.map((chartSpec) => (
-            <CustomChartCard
-              key={chartSpec.id}
-              chartSpec={chartSpec}
-              dashboard={dashboard}
-              compact
-              onRemove={() => onRemoveCustomChart(chartSpec.id)}
-            />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
