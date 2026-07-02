@@ -179,14 +179,44 @@ function limitRows(rows, limit) {
 }
 
 function extractOutputText(response) {
-  if (typeof response.output_text === "string") return response.output_text;
+  if (typeof response.output_text === "string" && response.output_text.trim()) return response.output_text;
   const chunks = [];
-  for (const item of response.output || []) {
-    for (const content of item.content || []) {
-      if (typeof content.text === "string") chunks.push(content.text);
-    }
+
+  for (const step of response.steps || []) {
+    if (step.type && step.type !== "model_output") continue;
+    collectTextContent(step.content, chunks);
   }
+
+  for (const item of response.output || []) {
+    collectTextContent(item.content, chunks);
+  }
+
+  for (const candidate of response.candidates || []) {
+    collectTextContent(candidate.content, chunks);
+  }
+
   return chunks.join("\n").trim();
+}
+
+function collectTextContent(content, chunks) {
+  if (!content) return;
+  if (typeof content === "string") {
+    chunks.push(content);
+    return;
+  }
+  if (Array.isArray(content)) {
+    content.forEach((item) => collectTextContent(item, chunks));
+    return;
+  }
+  if (typeof content.text === "string") {
+    chunks.push(content.text);
+  }
+  if (Array.isArray(content.parts)) {
+    content.parts.forEach((part) => collectTextContent(part, chunks));
+  }
+  if (Array.isArray(content.content)) {
+    content.content.forEach((item) => collectTextContent(item, chunks));
+  }
 }
 
 function parseBrief(text) {
