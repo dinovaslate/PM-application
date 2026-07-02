@@ -14,6 +14,7 @@ import {
   ImagePlus,
   LineChart as LineChartIcon,
   MessageCircle,
+  Plus,
   Search,
   Send,
   Settings2,
@@ -749,13 +750,31 @@ function CustomGraphStudio({
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [lastAnswer, setLastAnswer] = useState("");
+  const [isPromptOpen, setIsPromptOpen] = useState(false);
+  const containerRef = useRef(null);
   const chatEndpoint = getChatbotEndpoint();
-  const quickPrompts = getCustomGraphPrompts(groupId);
   const groupCharts = customCharts.filter((chart) => getCustomChartPlacement(chart) === groupId);
+
+  useEffect(() => {
+    if (!isPromptOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (containerRef.current?.contains(event.target)) return;
+      setIsPromptOpen(false);
+      setError("");
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isPromptOpen]);
 
   async function handleGenerateSpec(event) {
     event.preventDefault();
     const request = prompt.trim();
+    if (!isPromptOpen) {
+      setIsPromptOpen(true);
+      return;
+    }
     if (!request || status === "loading" || disabled) return;
     if (!chatEndpoint) {
       setError("Gemini proxy belum aktif di deployment ini.");
@@ -789,6 +808,7 @@ function CustomGraphStudio({
       });
       setLastAnswer(data.answer || "Graph spec dibuat. Data chart dihitung lokal dari dashboard.");
       setPrompt("");
+      setIsPromptOpen(false);
       setStatus("ready");
     } catch (err) {
       setError(err.message || "Gagal membuat graph spec.");
@@ -797,7 +817,7 @@ function CustomGraphStudio({
   }
 
   return (
-    <div className="mt-4 border-t border-slate-200 pt-3">
+    <div ref={containerRef} className="mt-4 border-t border-slate-200 pt-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.05em] text-slate-500">Custom graph</p>
@@ -811,36 +831,25 @@ function CustomGraphStudio({
       </div>
 
       <form onSubmit={handleGenerateSpec} className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
-        <div className="flex items-start gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white">
-            <Bot size={14} />
+        {isPromptOpen ? (
+          <div className="flex items-start gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white">
+              <Bot size={14} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                rows={2}
+                maxLength={360}
+                className="min-h-[52px] w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
+                placeholder="Contoh: top PM by cost"
+                disabled={status === "loading" || disabled}
+                autoFocus
+              />
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <textarea
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              rows={2}
-              maxLength={360}
-              className="min-h-[48px] w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
-              placeholder="Contoh: top PM by cost"
-              disabled={status === "loading" || disabled}
-            />
-          </div>
-        </div>
-
-        <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
-          {quickPrompts.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setPrompt(item)}
-              className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-100"
-              disabled={status === "loading" || disabled}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
+        ) : null}
 
         {error ? (
           <div className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800">
@@ -855,11 +864,11 @@ function CustomGraphStudio({
 
         <button
           type="submit"
-          disabled={!prompt.trim() || status === "loading" || !chatEndpoint || disabled}
-          className="mt-2 inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={(isPromptOpen && !prompt.trim()) || status === "loading" || disabled}
+          className={`${isPromptOpen || error || lastAnswer ? "mt-2" : ""} inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50`}
         >
-          <BarChart3 size={14} />
-          {status === "loading" ? "Generating..." : "Generate"}
+          <Plus size={14} />
+          {status === "loading" ? "Generating..." : isPromptOpen ? "Add graph" : "Add custom graph"}
         </button>
       </form>
 
@@ -3007,16 +3016,6 @@ function loadCustomCharts() {
 function getCustomChartPlacement(chart) {
   const placement = chart?.placement || chart?.groupId || "overview";
   return CUSTOMIZATION_GROUPS.some((group) => group.id === placement) ? placement : "overview";
-}
-
-function getCustomGraphPrompts(groupId) {
-  const prompts = {
-    overview: ["Health distribution", "Cost exposure per PM", "Workload trend", "Due status"],
-    health: ["Health by BU", "Schedule distribution", "Issue by type", "High value risk"],
-    capacity: ["Top PM by cost", "PM workload trend", "Project count by PM", "Risky PMs"],
-    priority: ["Top priority by value", "Open issue projects", "Overdue projects", "Cost by priority"],
-  };
-  return prompts[groupId] || prompts.overview;
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
