@@ -4,6 +4,24 @@ const MAX_QUESTION_CHARS = 1200;
 const MAX_HISTORY_ITEMS = 10;
 const MAX_IMAGE_BYTES = 2_500_000;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const CHART_SPEC_DATASETS = [
+  "healthDistribution",
+  "scheduleDistribution",
+  "dueDistribution",
+  "issueByType",
+  "resourceDistribution",
+  "costDistribution",
+  "workloadTrend",
+  "costTrend",
+  "pmPortfolioSummary",
+  "pmRiskList",
+  "topPriorityProjects",
+  "highValueProjects",
+  "healthByBu",
+  "workloadByBu",
+  "projectCountByPm",
+  "pmStatusDistribution",
+];
 const SYSTEM_PROMPT = [
   "You are a senior PMO portfolio analyst chatbot for a React dashboard.",
   "Answer in Indonesian with a direct, operational tone.",
@@ -61,7 +79,7 @@ export async function handler(event) {
   }
 
   const history = sanitizeHistory(payload.history);
-  const mode = payload.mode === "chart" ? "chart" : "chat";
+  const mode = payload.mode === "chart" ? "chart" : payload.mode === "chartSpec" ? "chartSpec" : "chat";
   let image = null;
   try {
     image = sanitizeImage(payload.image);
@@ -102,14 +120,20 @@ export async function handler(event) {
     }
 
     const outputText = extractOutputText(upstreamBody);
-    const { answer, chart } = mode === "chart" ? parseChartResponse(outputText) : { answer: normalizeAnswer(outputText), chart: null };
+    const parsed =
+      mode === "chart"
+        ? parseChartResponse(outputText)
+        : mode === "chartSpec"
+          ? parseChartSpecResponse(outputText)
+          : { answer: normalizeAnswer(outputText), chart: null, chartSpec: null };
     return jsonResponse(
       200,
       {
         provider: "gemini",
         model,
-        answer,
-        chart,
+        answer: parsed.answer,
+        chart: parsed.chart || null,
+        chartSpec: parsed.chartSpec || null,
       },
       headers,
     );
@@ -130,6 +154,16 @@ function buildChatInput(snapshotText, history, question, image, mode) {
           "Prefer chart types that match the data: bar for category comparison, line for monthly trends.",
           "Limit charts to 12 rows and 3 series. Keep labels short. No markdown fences.",
         ].join(" ")
+      : mode === "chartSpec"
+        ? [
+            'Return valid compact JSON only. Schema: {"answer":"short Indonesian explanation","chartSpec":{"title":"string","description":"string","type":"bar|line","dataset":"string","xKey":"string","series":[{"key":"string","label":"string"}],"valueFormat":"currency|count|number|percent","limit":10,"sort":"desc|asc|none"}}.',
+            "Do not return chart.data and do not calculate chart rows. The frontend will calculate rows from the selected dataset whenever Excel changes.",
+            `Allowed dataset ids: ${CHART_SPEC_DATASETS.join(", ")}.`,
+            "Use metric keys that exist in the chosen dataset from the snapshot. Choose metrics with the same unit when possible.",
+            "Prefer line for workloadTrend or costTrend. Prefer bar for category, PM, BU, and project rankings.",
+            "If the request cannot be supported, set chartSpec to null and explain what source data is missing in answer.",
+            "No markdown fences.",
+          ].join(" ")
       : [
           "Answer rules: Indonesian only.",
           "Keep the answer under 8 short bullet points or 2 short paragraphs unless the user explicitly asks for an audit.",
@@ -181,12 +215,17 @@ function sanitizeSnapshot(snapshot) {
     issueByType: limitRows(snapshot.issueByType, 12),
     resourceDistribution: limitRows(snapshot.resourceDistribution, 10),
     costDistribution: limitRows(snapshot.costDistribution, 10),
+    healthByBu: limitRows(snapshot.healthByBu, 12),
+    workloadByBu: limitRows(snapshot.workloadByBu, 12),
+    projectCountByPm: limitRows(snapshot.projectCountByPm, 12),
+    pmStatusDistribution: limitRows(snapshot.pmStatusDistribution, 8),
     workloadTrend: limitRows(snapshot.workloadTrend, 12),
     costTrend: limitRows(snapshot.costTrend, 12),
     pmPortfolioSummary: limitRows(snapshot.pmPortfolioSummary, 120),
     pmRiskList: limitRows(snapshot.pmRiskList, 120),
     topPriorityProjects: limitRows(snapshot.topPriorityProjects, 25),
     highValueProjects: limitRows(snapshot.highValueProjects, 15),
+    availableChartDatasets: limitRows(snapshot.availableChartDatasets, 20),
   };
 }
 
@@ -304,6 +343,26 @@ function parseChartResponse(text) {
   }
 }
 
+function parseChartSpecResponse(text) {
+  const fallback = { answer: normalizeAnswer(text), chart: null, chartSpec: null };
+  if (!text) return fallback;
+
+  const raw = String(text).trim();
+  const jsonText = raw.startsWith("{") ? raw : raw.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonText) return fallback;
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    return {
+      answer: normalizeAnswer(parsed.answer || parsed.summary || ""),
+      chart: null,
+      chartSpec: normalizeChartSpec(parsed.chartSpec || parsed.chart_spec || parsed.spec),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeChart(chart) {
   if (!chart || typeof chart !== "object") return null;
   const type = chart.type === "line" ? "line" : "bar";
@@ -342,6 +401,37 @@ function normalizeChartRow(row, xKey, series) {
     normalized[item.key] = Number.isFinite(value) ? value : 0;
   });
   return normalized;
+}
+
+function normalizeChartSpec(spec) {
+  if (!spec || typeof spec !== "object") return null;
+  const dataset = String(spec.dataset || "").trim();
+  if (!CHART_SPEC_DATASETS.includes(dataset)) return null;
+
+  const series = Array.isArray(spec.series)
+    ? spec.series
+        .slice(0, 3)
+        .map((item) => ({
+          key: String(item.key || item.metric || item.label || "").slice(0, 80),
+          label: String(item.label || item.key || item.metric || "").slice(0, 80),
+        }))
+        .filter((item) => item.key)
+    : [];
+  if (!series.length) return null;
+
+  const limit = Number(spec.limit);
+  const sort = ["asc", "desc", "none"].includes(spec.sort) ? spec.sort : "desc";
+  return {
+    title: String(spec.title || "Custom Gemini Graph").slice(0, 120),
+    description: String(spec.description || "").slice(0, 220),
+    type: spec.type === "line" ? "line" : "bar",
+    dataset,
+    xKey: String(spec.xKey || "name").slice(0, 40),
+    series,
+    valueFormat: ["currency", "count", "number", "percent"].includes(spec.valueFormat) ? spec.valueFormat : "number",
+    limit: Number.isFinite(limit) ? Math.min(Math.max(Math.round(limit), 3), 12) : 10,
+    sort,
+  };
 }
 
 function getCorsHeaders(origin) {

@@ -124,6 +124,8 @@ const tabs = [
 ];
 
 const CUSTOMIZATION_STORAGE_KEY = "pmo-dashboard-customization-v1";
+const CUSTOM_CHARTS_STORAGE_KEY = "pmo-dashboard-custom-charts-v1";
+const MAX_CUSTOM_CHARTS = 6;
 
 const CUSTOMIZATION_GROUPS = [
   {
@@ -137,6 +139,7 @@ const CUSTOMIZATION_GROUPS = [
       { id: "overview.kpi.overdue", label: "KPI Terlambat" },
       { id: "overview.kpi.valueAtRisk", label: "KPI Value at Risk" },
       { id: "overview.section.insights", label: "Smart Insights Lokal" },
+      { id: "overview.section.customCharts", label: "Custom Gemini Graphs" },
       { id: "overview.section.healthByBu", label: "Distribusi Health per BU" },
       { id: "overview.section.workloadTrend", label: "Tren Beban Kerja PM" },
       { id: "overview.section.priorityProjects", label: "Proyek Prioritas Tinggi" },
@@ -194,6 +197,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
   const [customization, setCustomization] = useState(loadDashboardCustomization);
+  const [customCharts, setCustomCharts] = useState(loadCustomCharts);
   const [filters, setFilters] = useState({
     priority: "All",
     bu: "All",
@@ -224,6 +228,11 @@ export default function App() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEY, JSON.stringify(customization));
   }, [customization]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CUSTOM_CHARTS_STORAGE_KEY, JSON.stringify(customCharts));
+  }, [customCharts]);
 
   async function handleFileChange(event) {
     const files = Array.from(event.target.files || []);
@@ -263,6 +272,21 @@ export default function App() {
       });
       return next;
     });
+  }
+
+  function handleAddCustomChart(chartSpec) {
+    setCustomCharts((current) => {
+      const nextChart = {
+        ...chartSpec,
+        id: chartSpec.id || `chart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: chartSpec.createdAt || new Date().toISOString(),
+      };
+      return [nextChart, ...current.filter((chart) => chart.id !== nextChart.id)].slice(0, MAX_CUSTOM_CHARTS);
+    });
+  }
+
+  function handleRemoveCustomChart(chartId) {
+    setCustomCharts((current) => current.filter((chart) => chart.id !== chartId));
   }
 
   const ActiveView =
@@ -343,6 +367,9 @@ export default function App() {
               isWidgetVisible={isWidgetVisible}
               onOpenCustomize={() => setIsCustomizeOpen(true)}
               sourceName={sourceName}
+              customCharts={customCharts}
+              onAddCustomChart={handleAddCustomChart}
+              onRemoveCustomChart={handleRemoveCustomChart}
             />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
@@ -675,6 +702,194 @@ function SmartInsights({ dashboard, sourceName }) {
   );
 }
 
+function CustomGraphStudio({ dashboard, sourceName, customCharts = [], onAddCustomChart, onRemoveCustomChart }) {
+  const [prompt, setPrompt] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+  const [lastAnswer, setLastAnswer] = useState("");
+  const chatEndpoint = getChatbotEndpoint();
+  const quickPrompts = [
+    "Grafik cost exposure per PM",
+    "Tren total cost sampai Desember",
+    "Distribusi health project",
+    "PM dengan proyek risky terbanyak",
+  ];
+
+  async function handleGenerateSpec(event) {
+    event.preventDefault();
+    const request = prompt.trim();
+    if (!request || status === "loading") return;
+    if (!chatEndpoint) {
+      setError("Gemini proxy belum aktif di deployment ini.");
+      return;
+    }
+
+    setStatus("loading");
+    setError("");
+    setLastAnswer("");
+
+    try {
+      const response = await fetch(chatEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: request,
+          mode: "chartSpec",
+          history: [],
+          snapshot: buildChartSpecPayload(dashboard, sourceName),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Gagal membuat graph spec.");
+      if (!data.chartSpec) throw new Error(data.answer || "Gemini belum menemukan dataset yang cocok untuk graph ini.");
+
+      onAddCustomChart({
+        ...data.chartSpec,
+        prompt: request,
+        answer: data.answer || "",
+      });
+      setLastAnswer(data.answer || "Graph spec dibuat. Data chart dihitung lokal dari dashboard.");
+      setPrompt("");
+      setStatus("ready");
+    } catch (err) {
+      setError(err.message || "Gagal membuat graph spec.");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <Panel title="Custom Gemini Graphs" action={`${customCharts.length}/${MAX_CUSTOM_CHARTS} saved`}>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <form onSubmit={handleGenerateSpec} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <div className="flex items-start gap-3">
+            <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">
+              <Bot size={16} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-slate-950">Generate reusable graph spec</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Gemini dipakai saat tombol generate diklik. Setelah itu chart dihitung ulang lokal dari Excel aktif.
+              </p>
+            </div>
+          </div>
+
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={3}
+            maxLength={400}
+            className="mt-3 min-h-[92px] w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-5 text-slate-800 outline-none transition focus:border-slate-400"
+            placeholder="Contoh: tampilkan 10 PM dengan cost exposure terbesar"
+            disabled={status === "loading"}
+          />
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {quickPrompts.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setPrompt(item)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100"
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+
+          {error ? (
+            <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+              {error}
+            </div>
+          ) : null}
+          {lastAnswer ? (
+            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">
+              {lastAnswer}
+            </div>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={!prompt.trim() || status === "loading" || !chatEndpoint}
+            className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+          >
+            <BarChart3 size={16} />
+            {status === "loading" ? "Generating..." : "Generate Graph Spec"}
+          </button>
+        </form>
+
+        <div className="min-w-0">
+          {customCharts.length ? (
+            <div className="grid min-w-0 gap-3">
+              {customCharts.map((chartSpec) => (
+                <CustomChartCard
+                  key={chartSpec.id}
+                  chartSpec={chartSpec}
+                  dashboard={dashboard}
+                  onRemove={() => onRemoveCustomChart(chartSpec.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-[260px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center">
+              <div className="max-w-sm">
+                <BarChart3 className="mx-auto text-slate-400" size={26} />
+                <p className="mt-3 text-sm font-bold text-slate-900">Belum ada custom graph</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Buat satu spec dari Gemini, lalu graph ini akan reuse data dashboard lokal setiap upload Excel baru.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function CustomChartCard({ chartSpec, dashboard, onRemove }) {
+  const chart = useMemo(() => materializeCustomChart(chartSpec, dashboard), [chartSpec, dashboard]);
+
+  return (
+    <div className="motion-chart-card min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-slate-950" title={chartSpec.title}>
+            {chartSpec.title}
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">
+              {chartSpec.dataset}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase text-emerald-700">
+              Local data
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+          aria-label="Remove custom graph"
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      {chartSpec.description ? (
+        <p className="mb-3 text-xs leading-5 text-slate-500">{chartSpec.description}</p>
+      ) : null}
+
+      {chart ? (
+        <GeneratedChartCanvas chart={chart} height={270} />
+      ) : (
+        <div className="flex min-h-[220px] items-center justify-center rounded-lg bg-slate-50 px-4 text-center text-xs leading-5 text-slate-500">
+          Spec ini belum cocok dengan dataset upload saat ini. Generate spec baru atau cek field Excel yang tersedia.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DashboardChatbot({ dashboard, sourceName }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState(() => [createChatWelcomeMessage(dashboard)]);
@@ -967,47 +1182,58 @@ function ChatChart({ chart }) {
   return (
     <div className="motion-chart-card mt-3 rounded-xl border border-slate-200 bg-white p-3">
       <p className="mb-2 text-xs font-bold text-slate-900">{chart.title || "Generated Chart"}</p>
-      <div className="h-60 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          {chart.type === "line" ? (
-            <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              {series.map((item, index) => (
-                <Line
-                  key={item.key}
-                  type="monotone"
-                  dataKey={item.key}
-                  name={item.label || item.key}
-                  stroke={linePalette[index % linePalette.length]}
-                  strokeWidth={2.4}
-                  dot={false}
-                />
-              ))}
-            </LineChart>
-          ) : (
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              {series.map((item, index) => (
-                <Bar
-                  key={item.key}
-                  dataKey={item.key}
-                  name={item.label || item.key}
-                  fill={linePalette[index % linePalette.length]}
-                  radius={[5, 5, 0, 0]}
-                />
-              ))}
-            </BarChart>
-          )}
-        </ResponsiveContainer>
-      </div>
+      <GeneratedChartCanvas chart={{ ...chart, xKey, series, data }} height={240} />
+    </div>
+  );
+}
+
+function GeneratedChartCanvas({ chart, height = 260 }) {
+  const xKey = chart.xKey || "name";
+  const series = Array.isArray(chart.series) ? chart.series : [];
+  const data = Array.isArray(chart.data) ? chart.data : [];
+  if (!series.length || !data.length) return null;
+
+  return (
+    <div className="w-full min-w-0" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        {chart.type === "line" ? (
+          <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {series.map((item, index) => (
+              <Line
+                key={item.key}
+                type="monotone"
+                dataKey={item.key}
+                name={item.label || item.key}
+                stroke={linePalette[index % linePalette.length]}
+                strokeWidth={2.4}
+                dot={false}
+              />
+            ))}
+          </LineChart>
+        ) : (
+          <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <YAxis tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(value, name) => [formatChatChartValue(value, chart.valueFormat), name]} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {series.map((item, index) => (
+              <Bar
+                key={item.key}
+                dataKey={item.key}
+                name={item.label || item.key}
+                fill={linePalette[index % linePalette.length]}
+                radius={[5, 5, 0, 0]}
+              />
+            ))}
+          </BarChart>
+        )}
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -1207,7 +1433,7 @@ function AiBriefCard({ brief }) {
   );
 }
 
-function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName }) {
+function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName, customCharts, onAddCustomChart, onRemoveCustomChart }) {
   const { kpis, charts, priorityProjects } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -1223,10 +1449,11 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, source
     { id: "overview.kpi.valueAtRisk", title: "Value at Risk", value: formatCurrency(kpis.valueAtRisk), icon: LineChartIcon, tone: "slate" },
   ].filter((card) => isWidgetVisible(card.id));
   const showInsights = isWidgetVisible("overview.section.insights");
+  const showCustomCharts = isWidgetVisible("overview.section.customCharts");
   const showHealthByBu = isWidgetVisible("overview.section.healthByBu");
   const showWorkloadTrend = isWidgetVisible("overview.section.workloadTrend");
   const showPriorityProjects = isWidgetVisible("overview.section.priorityProjects");
-  const hasVisibleWidgets = kpiCards.length || showInsights || showHealthByBu || showWorkloadTrend || showPriorityProjects;
+  const hasVisibleWidgets = kpiCards.length || showInsights || showCustomCharts || showHealthByBu || showWorkloadTrend || showPriorityProjects;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -1239,6 +1466,16 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, source
       ) : null}
 
       {showInsights ? <SmartInsights dashboard={dashboard} sourceName={sourceName} /> : null}
+
+      {showCustomCharts ? (
+        <CustomGraphStudio
+          dashboard={dashboard}
+          sourceName={sourceName}
+          customCharts={customCharts}
+          onAddCustomChart={onAddCustomChart}
+          onRemoveCustomChart={onRemoveCustomChart}
+        />
+      ) : null}
 
       {showHealthByBu || showWorkloadTrend ? (
         <div className={`grid gap-5 ${showHealthByBu && showWorkloadTrend ? "lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]" : ""}`}>
@@ -2717,6 +2954,257 @@ function loadDashboardCustomization() {
   }
 }
 
+function loadCustomCharts() {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CUSTOM_CHARTS_STORAGE_KEY) || "[]");
+    return Array.isArray(stored) ? stored.filter((chart) => chart?.id && chart?.dataset).slice(0, MAX_CUSTOM_CHARTS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function materializeCustomChart(chartSpec, dashboard) {
+  const dataset = getCustomChartDataset(chartSpec?.dataset, dashboard);
+  if (!dataset) return null;
+
+  const series = normalizeCustomChartSeries(chartSpec?.series, dataset);
+  if (!series.length) return null;
+
+  const xKey = dataset.xKey;
+  const limit = Number.isFinite(Number(chartSpec.limit)) ? Math.min(Math.max(Number(chartSpec.limit), 3), 12) : dataset.defaultLimit || 10;
+  const sort = chartSpec.sort || dataset.defaultSort || "desc";
+  const primaryKey = series[0].key;
+  const rows = dataset.rows
+    .map((row) => {
+      const next = {
+        [xKey]: String(row[xKey] ?? row.name ?? row.pm ?? row.project ?? "").slice(0, 80),
+      };
+      series.forEach((item) => {
+        const value = Number(row[item.key]);
+        next[item.key] = Number.isFinite(value) ? value : 0;
+      });
+      return next;
+    })
+    .filter((row) => row[xKey]);
+
+  const sortedRows =
+    sort === "none"
+      ? rows
+      : [...rows].sort((a, b) => compareSortValues(a[primaryKey], b[primaryKey], sort === "asc" ? "asc" : "desc"));
+  const data = sortedRows.slice(0, limit);
+  if (!data.length) return null;
+
+  return {
+    title: chartSpec.title || dataset.label,
+    type: chartSpec.type === "line" ? "line" : "bar",
+    xKey,
+    series,
+    data,
+    valueFormat: getCustomChartValueFormat(chartSpec, dataset, series),
+  };
+}
+
+function normalizeCustomChartSeries(rawSeries, dataset) {
+  const requested = Array.isArray(rawSeries) ? rawSeries : [];
+  const selected = requested
+    .map((item) => {
+      const metricKey = resolveCustomMetricKey(item?.key || item?.metric || item?.label, dataset);
+      if (!metricKey) return null;
+      const metric = dataset.metrics[metricKey];
+      return {
+        key: metricKey,
+        label: String(item?.label || metric.label || metricKey).slice(0, 80),
+      };
+    })
+    .filter(Boolean);
+
+  const unique = [];
+  selected.forEach((item) => {
+    if (!unique.some((current) => current.key === item.key)) unique.push(item);
+  });
+
+  if (unique.length) return unique.slice(0, 3);
+  return dataset.defaultSeries.map((key) => ({
+    key,
+    label: dataset.metrics[key]?.label || key,
+  }));
+}
+
+function resolveCustomMetricKey(rawKey, dataset) {
+  const normalized = compactChartKey(rawKey);
+  if (!normalized) return "";
+  return (
+    Object.keys(dataset.metrics).find((key) => {
+      const metric = dataset.metrics[key];
+      return (
+        compactChartKey(key) === normalized ||
+        compactChartKey(metric.label) === normalized ||
+        (metric.aliases || []).some((alias) => compactChartKey(alias) === normalized)
+      );
+    }) || ""
+  );
+}
+
+function getCustomChartValueFormat(chartSpec, dataset, series) {
+  const firstMetric = dataset.metrics[series[0]?.key];
+  const firstFormat = firstMetric?.format || dataset.valueFormat || "number";
+  if (["currency", "count", "number", "percent"].includes(firstFormat)) return firstFormat;
+  if (["currency", "count", "number", "percent"].includes(chartSpec.valueFormat)) return chartSpec.valueFormat;
+  return "number";
+}
+
+function getCustomChartDataset(datasetId, dashboard) {
+  const { charts, projects, pmRiskList, troubledHighValueProjects } = dashboard;
+  const months = dashboard.months || MONTHS;
+  const workloadMode = dashboard.dataQuality?.workloadMode || "live";
+  const workloadLabels = getWorkloadMetricLabels(workloadMode);
+  const workloadFormat = workloadMode === "proxy" ? "count" : "percent";
+  const distributionMetrics = {
+    value: { label: "Projects", format: "count", aliases: ["count", "jumlah", "total"] },
+  };
+  const distributionConfig = (label, rows) => ({
+    label,
+    xKey: "name",
+    rows,
+    metrics: distributionMetrics,
+    defaultSeries: ["value"],
+    valueFormat: "count",
+    defaultSort: "desc",
+  });
+
+  const datasets = {
+    healthDistribution: distributionConfig("Health Distribution", charts.healthDistribution),
+    scheduleDistribution: distributionConfig("Schedule Distribution", charts.scheduleDistribution),
+    dueDistribution: distributionConfig("Due Status Distribution", countProjectRows(projects, "dueStatus")),
+    issueByType: distributionConfig("Open Issue by Type", charts.issueByType),
+    resourceDistribution: distributionConfig("Resource Condition", charts.resourceDistribution),
+    costDistribution: distributionConfig("Cost Condition", charts.costDistribution),
+    pmStatusDistribution: distributionConfig("PM Status Distribution", charts.pmStatusDistribution),
+    projectCountByPm: distributionConfig("Project Count by PM", charts.projectCountByPm),
+    workloadTrend: {
+      label: "Workload Trend",
+      xKey: "name",
+      rows: toPortfolioWorkloadSeries(charts.pmWorkloadTrend, months, workloadLabels).map((row) => ({
+        name: row.name,
+        averageWorkload: row[workloadLabels.average],
+        peakWorkload: row[workloadLabels.peak],
+      })),
+      metrics: {
+        averageWorkload: { label: workloadLabels.average, format: workloadFormat, aliases: ["average", "avg", "avgload", "ratarata"] },
+        peakWorkload: { label: workloadLabels.peak, format: workloadFormat, aliases: ["peak", "max", "tertinggi"] },
+      },
+      defaultSeries: ["averageWorkload", "peakWorkload"],
+      valueFormat: workloadFormat,
+      defaultSort: "none",
+    },
+    costTrend: {
+      label: "Cost Exposure Trend",
+      xKey: "name",
+      rows: toSelectedCostSeries(charts.pmCostTrend, months, "TOTAL").map((row) => ({
+        name: row.name,
+        costExposure: row["Cost Exposure"],
+      })),
+      metrics: {
+        costExposure: { label: "Cost Exposure", format: "currency", aliases: ["cost", "exposure", "biaya", "nilai"] },
+      },
+      defaultSeries: ["costExposure"],
+      valueFormat: "currency",
+      defaultSort: "none",
+    },
+    pmPortfolioSummary: {
+      label: "PM Portfolio Summary",
+      xKey: "pm",
+      rows: charts.pmPortfolioSummary,
+      metrics: {
+        projects: { label: "Projects", format: "count", aliases: ["project", "projectcount", "jumlahproyek"] },
+        costExposure: { label: "Cost Exposure", format: "currency", aliases: ["cost", "exposure", "biaya"] },
+        portfolioValue: { label: "Portfolio Value", format: "currency", aliases: ["value", "nilai"] },
+        valueAtRisk: { label: "Value At Risk", format: "currency", aliases: ["riskvalue", "risk", "var"] },
+      },
+      defaultSeries: ["costExposure"],
+      valueFormat: "currency",
+      defaultSort: "desc",
+    },
+    pmRiskList: {
+      label: "PM Risk List",
+      xKey: "pm",
+      rows: pmRiskList,
+      metrics: {
+        projects: { label: "Projects", format: "count", aliases: ["total", "projectcount"] },
+        riskyProjects: { label: "Risky Projects", format: "count", aliases: ["risky", "risk", "warning"] },
+        overdueProjects: { label: "Overdue Projects", format: "count", aliases: ["overdue", "late", "terlambat"] },
+      },
+      defaultSeries: ["riskyProjects", "overdueProjects"],
+      valueFormat: "count",
+      defaultSort: "desc",
+    },
+    topPriorityProjects: {
+      label: "Top Priority Projects",
+      xKey: "project",
+      rows: [...projects]
+        .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || (b.value || 0) - (a.value || 0))
+        .slice(0, 25),
+      metrics: {
+        value: { label: "Project Value", format: "currency", aliases: ["value", "nilai", "amount"] },
+        costAmount: { label: "Cost", format: "currency", aliases: ["cost", "biaya"] },
+        openIssue: { label: "Open Issues", format: "count", aliases: ["issue", "issues"] },
+        currentWorkload: { label: "PM Workload", format: workloadFormat, aliases: ["workload", "active", "load"] },
+      },
+      defaultSeries: ["value"],
+      valueFormat: "currency",
+      defaultSort: "desc",
+    },
+    highValueProjects: {
+      label: "High-Value Risk Projects",
+      xKey: "project",
+      rows: troubledHighValueProjects,
+      metrics: {
+        value: { label: "Project Value", format: "currency", aliases: ["value", "nilai", "amount"] },
+        costAmount: { label: "Cost", format: "currency", aliases: ["cost", "biaya"] },
+        openIssue: { label: "Open Issues", format: "count", aliases: ["issue", "issues"] },
+        currentWorkload: { label: "PM Workload", format: workloadFormat, aliases: ["workload", "active", "load"] },
+      },
+      defaultSeries: ["value"],
+      valueFormat: "currency",
+      defaultSort: "desc",
+    },
+    healthByBu: {
+      label: "Health by BU",
+      xKey: "name",
+      rows: charts.healthByBu,
+      metrics: {
+        Healthy: { label: "Healthy", format: "count" },
+        Warning: { label: "Warning", format: "count" },
+        "Need Improvement": { label: "Need Improvement", format: "count", aliases: ["needimprovement", "critical"] },
+        Unknown: { label: "Unknown", format: "count" },
+      },
+      defaultSeries: ["Healthy", "Warning", "Need Improvement"],
+      valueFormat: "count",
+      defaultSort: "desc",
+    },
+    workloadByBu: {
+      label: "Workload by BU",
+      xKey: "name",
+      rows: charts.workloadByBu,
+      metrics: {
+        workload: { label: workloadMode === "proxy" ? "Active Projects" : "Workload", format: workloadFormat, aliases: ["load", "active", "workload"] },
+      },
+      defaultSeries: ["workload"],
+      valueFormat: workloadFormat,
+      defaultSort: "desc",
+    },
+  };
+
+  return datasets[datasetId] || null;
+}
+
+function compactChartKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
 function formatSourceName(files) {
   const names = files.map((file) => file.name).filter(Boolean);
   if (names.length <= 1) return names[0] || "Excel upload";
@@ -2922,6 +3410,54 @@ function buildChatPayload(dashboard, sourceName) {
       .map(toChatProjectRow),
     highValueProjects: troubledHighValueProjects.slice(0, 15).map(toChatProjectRow),
   };
+}
+
+function buildChartSpecPayload(dashboard, sourceName) {
+  return {
+    ...buildChatPayload(dashboard, sourceName),
+    healthByBu: dashboard.charts.healthByBu,
+    workloadByBu: dashboard.charts.workloadByBu,
+    projectCountByPm: dashboard.charts.projectCountByPm,
+    pmStatusDistribution: dashboard.charts.pmStatusDistribution,
+    availableChartDatasets: getCustomChartDatasetCatalog(dashboard),
+  };
+}
+
+function getCustomChartDatasetCatalog(dashboard) {
+  return [
+    "healthDistribution",
+    "scheduleDistribution",
+    "dueDistribution",
+    "issueByType",
+    "resourceDistribution",
+    "costDistribution",
+    "workloadTrend",
+    "costTrend",
+    "pmPortfolioSummary",
+    "pmRiskList",
+    "topPriorityProjects",
+    "highValueProjects",
+    "healthByBu",
+    "workloadByBu",
+    "projectCountByPm",
+    "pmStatusDistribution",
+  ]
+    .map((datasetId) => {
+      const dataset = getCustomChartDataset(datasetId, dashboard);
+      if (!dataset) return null;
+      return {
+        id: datasetId,
+        label: dataset.label,
+        xKey: dataset.xKey,
+        defaultType: dataset.defaultSort === "none" ? "line" : "bar",
+        metrics: Object.entries(dataset.metrics).map(([key, metric]) => ({
+          key,
+          label: metric.label,
+          format: metric.format,
+        })),
+      };
+    })
+    .filter(Boolean);
 }
 
 function toChatProjectRow(project) {
