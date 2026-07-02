@@ -1,8 +1,15 @@
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
 const MAX_SNAPSHOT_BYTES = 18000;
-const SYSTEM_PROMPT =
-  "You are a PMO portfolio analyst. Return valid compact JSON only with keys: summary, actions, questions. Keep it practical, concise, and based only on the provided dashboard snapshot.";
+const SYSTEM_PROMPT = [
+  "You are a senior PMO portfolio analyst.",
+  "Return valid compact JSON only with keys: summary, actions, questions.",
+  "Base the brief only on the provided dashboard snapshot.",
+  "The Excel source can be flexible, so inspect dataQuality before interpreting the portfolio.",
+  "If a metric is missing or low coverage, mention the limitation in summary or questions instead of guessing.",
+  "Prioritize actions around unhealthy, overdue, delayed, high-cost, open-issue, and overloaded-PM risk signals.",
+  "Keep it practical, concise, and Indonesian.",
+].join(" ");
 
 export async function handler(event) {
   const origin = event.headers?.origin || event.headers?.Origin || "";
@@ -156,7 +163,13 @@ async function generateOpenAiBrief(snapshotText, headers) {
 }
 
 function buildBriefPrompt(snapshotText) {
-  return `Analyze this PMO dashboard snapshot and produce an Indonesian executive action brief. JSON schema: {"summary":"string","actions":[{"priority":"Critical|High|Medium","title":"string","detail":"string"}],"questions":["string"]}. Snapshot: ${snapshotText}`;
+  return [
+    "Analyze this PMO dashboard snapshot and produce an Indonesian executive action brief.",
+    'JSON schema: {"summary":"string","actions":[{"priority":"Critical|High|Medium","title":"string","detail":"string"}],"questions":["string"]}.',
+    "Use exact figures from the snapshot when available.",
+    "If the dashboard recognized partial fields only, include confirmation questions for the stakeholder instead of creating unsupported conclusions.",
+    `Snapshot: ${snapshotText}`,
+  ].join(" ");
 }
 
 function sanitizeSnapshot(snapshot) {

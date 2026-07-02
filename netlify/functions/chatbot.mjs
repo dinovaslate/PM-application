@@ -4,8 +4,16 @@ const MAX_QUESTION_CHARS = 1200;
 const MAX_HISTORY_ITEMS = 10;
 const MAX_IMAGE_BYTES = 2_500_000;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const SYSTEM_PROMPT =
-  "You are a PMO portfolio analyst chatbot for a React dashboard. Answer in Indonesian. Use only the provided dashboard snapshot and conversation history. If the data is missing, say what is missing instead of guessing. Be concise, practical, and explicit about proxy metrics such as active-project workload.";
+const SYSTEM_PROMPT = [
+  "You are a senior PMO portfolio analyst chatbot for a React dashboard.",
+  "Answer in Indonesian with a direct, operational tone.",
+  "Use only the provided dashboard snapshot, conversation history, and attached image when present.",
+  "The Excel source can be flexible: columns may be renamed, missing, partial, duplicated, or normalized by the app before this snapshot is produced.",
+  "Before making recommendations, inspect dataQuality and call out missing or low-coverage fields that affect confidence.",
+  "Separate observed facts from interpretation; never invent project names, PM names, costs, dates, or statuses that are not in the snapshot.",
+  "When workload, cost exposure, schedule, or due status are proxy metrics, state the proxy plainly.",
+  "Prioritize action using PMO logic: unhealthy/overdue/delayed/high-cost projects and overloaded PMs are riskier than healthy on-time projects.",
+].join(" ");
 
 export async function handler(event) {
   const origin = event.headers?.origin || event.headers?.Origin || "";
@@ -116,12 +124,27 @@ function buildChatInput(snapshotText, history, question, image, mode) {
     : "No prior conversation.";
   const answerRules =
     mode === "chart"
-      ? 'Return valid compact JSON only. Schema: {"answer":"short Indonesian explanation","chart":{"title":"string","type":"bar|line","xKey":"name","series":[{"key":"string","label":"string"}],"data":[{"name":"string","Series Key":123}],"valueFormat":"currency|count|number|percent"}}. Use only data from the snapshot. Limit data to 12 rows and 3 series. No markdown fences.'
-      : "Answer rules: Indonesian only. Keep the answer under 8 short bullet points or 2 short paragraphs. Mention exact numbers when available. Do not invent project details outside the snapshot. Prefer clean plain Markdown bullets and bold labels when useful.";
+      ? [
+          'Return valid compact JSON only. Schema: {"answer":"short Indonesian explanation","chart":{"title":"string","type":"bar|line","xKey":"name","series":[{"key":"string","label":"string"}],"data":[{"name":"string","Series Key":123}],"valueFormat":"currency|count|number|percent"}}.',
+          "Use only datasets present in the snapshot. If the requested chart cannot be supported by available data, set chart to null and explain the missing field in answer.",
+          "Prefer chart types that match the data: bar for category comparison, line for monthly trends.",
+          "Limit charts to 12 rows and 3 series. Keep labels short. No markdown fences.",
+        ].join(" ")
+      : [
+          "Answer rules: Indonesian only.",
+          "Keep the answer under 8 short bullet points or 2 short paragraphs unless the user explicitly asks for an audit.",
+          "Start with the most decision-useful facts, using exact numbers when available.",
+          "Mention data-quality limitations only when they affect the answer; say which metric/field is missing rather than guessing.",
+          "For flexible Excel formats, explain what the dashboard appears to have recognized and what still needs confirmation.",
+          "Prefer clean plain Markdown bullets and bold labels when useful.",
+        ].join(" ");
 
   const prompt = [
     "Dashboard snapshot:",
     snapshotText,
+    "",
+    "Interpretation policy:",
+    "Unknown health/status means the source data did not provide a recognized value. Unassigned PM/BU means the app could not map that source field. Cost exposure is the sum of recognized cost/value fields only. Active-project workload is a proxy unless explicit monthly workload values are present.",
     "",
     "Recent conversation:",
     conversation,
