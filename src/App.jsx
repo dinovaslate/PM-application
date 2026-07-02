@@ -139,7 +139,6 @@ const CUSTOMIZATION_GROUPS = [
       { id: "overview.kpi.overdue", label: "KPI Terlambat" },
       { id: "overview.kpi.valueAtRisk", label: "KPI Value at Risk" },
       { id: "overview.section.insights", label: "Smart Insights Lokal" },
-      { id: "overview.section.customCharts", label: "Custom Gemini Graphs" },
       { id: "overview.section.healthByBu", label: "Distribusi Health per BU" },
       { id: "overview.section.workloadTrend", label: "Tren Beban Kerja PM" },
       { id: "overview.section.priorityProjects", label: "Proyek Prioritas Tinggi" },
@@ -367,9 +366,6 @@ export default function App() {
               isWidgetVisible={isWidgetVisible}
               onOpenCustomize={() => setIsCustomizeOpen(true)}
               sourceName={sourceName}
-              customCharts={customCharts}
-              onAddCustomChart={handleAddCustomChart}
-              onRemoveCustomChart={handleRemoveCustomChart}
             />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
@@ -384,6 +380,11 @@ export default function App() {
         onClose={() => setIsCustomizeOpen(false)}
         onReset={handleCustomizationReset}
         onToggle={handleCustomizationToggle}
+        dashboard={dashboard}
+        sourceName={sourceName}
+        customCharts={customCharts}
+        onAddCustomChart={handleAddCustomChart}
+        onRemoveCustomChart={handleRemoveCustomChart}
       />
       {projects.length ? <DashboardChatbot dashboard={dashboard} sourceName={sourceName} /> : null}
     </div>
@@ -527,7 +528,19 @@ function EmptyDashboard({ isLoading, onFileChange }) {
   );
 }
 
-function CustomizationPanel({ activeTab, customization, isOpen, onClose, onReset, onToggle }) {
+function CustomizationPanel({
+  activeTab,
+  customization,
+  isOpen,
+  onClose,
+  onReset,
+  onToggle,
+  dashboard,
+  sourceName,
+  customCharts,
+  onAddCustomChart,
+  onRemoveCustomChart,
+}) {
   if (!isOpen) return null;
 
   const activeGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === activeTab);
@@ -535,6 +548,7 @@ function CustomizationPanel({ activeTab, customization, isOpen, onClose, onReset
     ...(activeGroup ? [activeGroup] : []),
     ...CUSTOMIZATION_GROUPS.filter((group) => group.id !== activeTab),
   ];
+  const canCustomizeGraphs = (dashboard?.kpis?.totalProjects || 0) > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -557,40 +571,56 @@ function CustomizationPanel({ activeTab, customization, isOpen, onClose, onReset
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="space-y-5">
+            {canCustomizeGraphs ? (
+              <CustomGraphStudio
+                dashboard={dashboard}
+                sourceName={sourceName}
+                customCharts={customCharts}
+                onAddCustomChart={onAddCustomChart}
+                onRemoveCustomChart={onRemoveCustomChart}
+              />
+            ) : (
+              <section className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+                Upload Excel dulu untuk membuat custom Gemini graph.
+              </section>
+            )}
+
             {groups.map((group) => {
               const visibleCount = group.options.filter((option) => customization[option.id] !== false).length;
               return (
-                <section key={group.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-bold text-slate-950">{group.title}</p>
-                      <p className="text-xs text-slate-500">{visibleCount} dari {group.options.length} aktif</p>
+                <div key={group.id} className="space-y-5">
+                  <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-bold text-slate-950">{group.title}</p>
+                        <p className="text-xs text-slate-500">{visibleCount} dari {group.options.length} aktif</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onReset(group.id)}
+                        className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
+                      >
+                        Reset
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onReset(group.id)}
-                      className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
-                    >
-                      Reset
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {group.options.map((option) => {
-                      const checked = customization[option.id] !== false;
-                      return (
-                        <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
-                          <span className="min-w-0 font-semibold text-slate-700">{option.label}</span>
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 shrink-0 accent-slate-950"
-                            checked={checked}
-                            onChange={(event) => onToggle(option.id, event.target.checked)}
-                          />
-                        </label>
-                      );
-                    })}
-                  </div>
-                </section>
+                    <div className="space-y-2">
+                      {group.options.map((option) => {
+                        const checked = customization[option.id] !== false;
+                        return (
+                          <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+                            <span className="min-w-0 font-semibold text-slate-700">{option.label}</span>
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 shrink-0 accent-slate-950"
+                              checked={checked}
+                              onChange={(event) => onToggle(option.id, event.target.checked)}
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
               );
             })}
           </div>
@@ -1433,7 +1463,7 @@ function AiBriefCard({ brief }) {
   );
 }
 
-function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName, customCharts, onAddCustomChart, onRemoveCustomChart }) {
+function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName }) {
   const { kpis, charts, priorityProjects } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -1449,11 +1479,10 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, source
     { id: "overview.kpi.valueAtRisk", title: "Value at Risk", value: formatCurrency(kpis.valueAtRisk), icon: LineChartIcon, tone: "slate" },
   ].filter((card) => isWidgetVisible(card.id));
   const showInsights = isWidgetVisible("overview.section.insights");
-  const showCustomCharts = isWidgetVisible("overview.section.customCharts");
   const showHealthByBu = isWidgetVisible("overview.section.healthByBu");
   const showWorkloadTrend = isWidgetVisible("overview.section.workloadTrend");
   const showPriorityProjects = isWidgetVisible("overview.section.priorityProjects");
-  const hasVisibleWidgets = kpiCards.length || showInsights || showCustomCharts || showHealthByBu || showWorkloadTrend || showPriorityProjects;
+  const hasVisibleWidgets = kpiCards.length || showInsights || showHealthByBu || showWorkloadTrend || showPriorityProjects;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -1466,16 +1495,6 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, source
       ) : null}
 
       {showInsights ? <SmartInsights dashboard={dashboard} sourceName={sourceName} /> : null}
-
-      {showCustomCharts ? (
-        <CustomGraphStudio
-          dashboard={dashboard}
-          sourceName={sourceName}
-          customCharts={customCharts}
-          onAddCustomChart={onAddCustomChart}
-          onRemoveCustomChart={onRemoveCustomChart}
-        />
-      ) : null}
 
       {showHealthByBu || showWorkloadTrend ? (
         <div className={`grid gap-5 ${showHealthByBu && showWorkloadTrend ? "lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]" : ""}`}>
