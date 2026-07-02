@@ -14,7 +14,7 @@ export const MONTHS = [
 ];
 
 const FIELD_ALIASES = {
-  iwo: ["iwo", "workorder", "internalworkorder", "nomoriwo", "kodeiwo"],
+  iwo: ["iwo", "iwono", "workorder", "internalworkorder", "nomoriwo", "kodeiwo"],
   project: ["projectname", "namaproject", "namaproyek", "project", "proyek"],
   customer: ["endcustname", "endcustomer", "customername", "custname", "customer", "client", "pelanggan", "namacustomer"],
   pm: ["pm", "pmname", "namapm", "projectmanager", "managerproject", "projectlead", "pic"],
@@ -23,12 +23,24 @@ const FIELD_ALIASES = {
   endDate: ["enddate", "finishdate", "duedate", "targetdate", "tanggalakhir", "deadline"],
   health: ["overallhealthcat", "projecthealthcat", "healthcat", "overallhealth", "health", "projecthealth", "statushealth", "kesehatanproyek"],
   dueStatus: ["duestatus", "due", "deadline", "statusdue", "overdue"],
-  schedule: ["schedulecat", "scheduleperformancecat", "scheduleperformance", "statusschedule", "jadwal", "schedule"],
-  resource: ["resourcecat", "resourcecondition", "resourceutilization", "resourceutilisation", "kondisiresource", "resource"],
-  cost: ["costcat", "costcondition", "statuscost", "budgetcondition", "kondisicost", "kondisibiaya", "costscore"],
+  schedule: ["spi", "schedulecat", "scheduleperformancecat", "scheduleperformance", "statusschedule", "schedulestatus", "jadwal", "schedule"],
+  resource: [
+    "mandaysinfo",
+    "planvsprecalc",
+    "resourcecat",
+    "resourcecondition",
+    "resourceutilization",
+    "resourceutilisation",
+    "kondisiresource",
+    "resource",
+  ],
+  cost: ["budgetstatus", "costcat", "costcondition", "statuscost", "budgetcondition", "kondisicost", "kondisibiaya", "costscore"],
   costAmount: [
     "totalcostactualperiwo",
     "costactualperiwo",
+    "mandayschargedamount",
+    "allocatedmandaysamount",
+    "mandaysworkplanamount",
     "costplanperiwo",
     "actualcostperiwo",
     "plannedcostperiwo",
@@ -56,10 +68,14 @@ const AGGREGATE_COST_ACTUAL_ALIASES = [
   "totalcostactualperiwo",
   "costactualperiwo",
   "actualcostperiwo",
+  "mandayschargedamount",
+  "allocatedmandaysamount",
+  "mandaysworkplanamount",
   "costactual",
   "actualcost",
   "costamount",
   "projectcost",
+  "ac",
 ];
 
 const DETAIL_COST_ACTUAL_ALIASES = [
@@ -333,6 +349,21 @@ export function parseWorkbook(file) {
   );
 }
 
+export async function parseWorkbooks(files) {
+  const fileList = Array.from(files || []);
+  const parsedFiles = await Promise.all(
+    fileList.map(async (file) => {
+      const rows = await parseWorkbook(file);
+      return rows.map((project) => ({
+        ...project,
+        sourceFile: file.name || "Excel file",
+      }));
+    }),
+  );
+
+  return mergeProjectRecords(parsedFiles.flat());
+}
+
 export function parseWorkbookData(result) {
   const sheets = normalizeWorkbookResult(result);
   const parsedSheets = sheets
@@ -503,6 +534,7 @@ function normalizeProject(row, index) {
   const pmWorkload = parseWorkload(pmWorkloadRaw);
   const startDate = parseDateValue(getField(row, "startDate"));
   const endDate = parseDateValue(getField(row, "endDate"));
+  const rawDueStatus = getField(row, "dueStatus");
   const rawSchedule = getField(row, "schedule");
   const rawOpenIssue = getField(row, "openIssue");
   const rawIssueType = getField(row, "issueType");
@@ -545,7 +577,7 @@ function normalizeProject(row, index) {
     startDate,
     endDate,
     health: normalizeHealth(getField(row, "health")),
-    dueStatus: normalizeDueStatus(getField(row, "dueStatus")),
+    dueStatus: hasCellValue(rawDueStatus) ? normalizeDueStatus(rawDueStatus) : inferDueStatusFromEndDate(endDate),
     schedule: normalizeSchedule(rawSchedule),
     resource: normalizeResourceCondition(getField(row, "resource")),
     cost: normalizeCostCondition(getField(row, "cost")),
@@ -561,6 +593,135 @@ function normalizeProject(row, index) {
     hasUsableWorkloadInput,
     workload,
   };
+}
+
+function mergeProjectRecords(projects) {
+  const merged = new Map();
+
+  projects.forEach((project, index) => {
+    const key = getProjectMergeKey(project, index);
+    const current = merged.get(key);
+    merged.set(key, current ? mergeProject(current, project) : project);
+  });
+
+  return Array.from(merged.values()).map((project, index) => ({
+    ...project,
+    id: project.iwo || project.id || `ROW-${index + 1}`,
+  }));
+}
+
+function getProjectMergeKey(project, index) {
+  const iwo = String(project.iwo || "").trim();
+  if (iwo && !/^IWO-\d+$/i.test(iwo)) return `iwo:${compactKey(iwo)}`;
+
+  const projectName = compactKey(project.project);
+  const pm = compactKey(project.pm);
+  const customer = compactKey(project.customer);
+  if (projectName && pm) return `project:${projectName}:${pm}:${customer}`;
+  return `row:${index}`;
+}
+
+function mergeProject(current, incoming) {
+  const workload = {};
+  MONTHS.forEach((month) => {
+    workload[month.key] = Math.max(current.workload?.[month.key] || 0, incoming.workload?.[month.key] || 0);
+  });
+
+  const monthlyCost = {};
+  MONTHS.forEach((month) => {
+    monthlyCost[month.key] = Math.max(current.monthlyCost?.[month.key] || 0, incoming.monthlyCost?.[month.key] || 0);
+  });
+
+  return {
+    ...current,
+    project: chooseSpecificText(current.project, incoming.project, "Project"),
+    customer: chooseSpecificText(current.customer, incoming.customer, "Unassigned"),
+    pm: chooseSpecificText(current.pm, incoming.pm, "Unassigned"),
+    bu: chooseSpecificText(current.bu, incoming.bu, "Unassigned"),
+    sourceFile: mergeSourceFiles(current.sourceFile, incoming.sourceFile),
+    startDate: earliestDate(current.startDate, incoming.startDate),
+    endDate: latestDate(current.endDate, incoming.endDate),
+    health: pickBySeverity(current.health, incoming.health, { Healthy: 0, Warning: 1, "Need Improvement": 2 }),
+    dueStatus: pickBySeverity(current.dueStatus, incoming.dueStatus, { "On Track": 0, "At Risk": 1, Overdue: 2 }),
+    schedule: pickBySeverity(current.schedule, incoming.schedule, { Leading: 0, "On Time": 1, "Potential Delay": 2, Delay: 3 }),
+    resource: pickCondition(current.resource, incoming.resource),
+    cost: pickCondition(current.cost, incoming.cost),
+    openIssue: Math.max(current.openIssue || 0, incoming.openIssue || 0),
+    issueType: chooseIssueType(current.issueType, incoming.issueType),
+    value: Math.max(current.value || 0, incoming.value || 0),
+    costAmount: Math.max(current.costAmount || 0, incoming.costAmount || 0),
+    monthlyCost,
+    hasCostInput: current.hasCostInput || incoming.hasCostInput,
+    hasScheduleInput: current.hasScheduleInput || incoming.hasScheduleInput,
+    hasIssueInput: current.hasIssueInput || incoming.hasIssueInput,
+    hasWorkloadInput: current.hasWorkloadInput || incoming.hasWorkloadInput,
+    hasUsableWorkloadInput: current.hasUsableWorkloadInput || incoming.hasUsableWorkloadInput,
+    workload,
+  };
+}
+
+function chooseSpecificText(current, incoming, placeholder) {
+  const currentText = String(current || "").trim();
+  const incomingText = String(incoming || "").trim();
+  if (!currentText || compactKey(currentText).startsWith(compactKey(placeholder))) return incomingText || currentText;
+  if (incomingText.length > currentText.length && !compactKey(incomingText).startsWith(compactKey(placeholder))) return incomingText;
+  return currentText;
+}
+
+function mergeSourceFiles(current, incoming) {
+  return Array.from(
+    new Set(
+      [current, incoming]
+        .flatMap((item) => String(item || "").split(","))
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ).join(", ");
+}
+
+function earliestDate(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a <= b ? a : b;
+}
+
+function latestDate(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a >= b ? a : b;
+}
+
+function pickBySeverity(current, incoming, severityMap) {
+  const currentSeverity = severityMap[current] ?? 0;
+  const incomingSeverity = severityMap[incoming] ?? 0;
+  return incomingSeverity > currentSeverity ? incoming : current;
+}
+
+function pickCondition(current, incoming) {
+  const severity = {
+    overbudget: 4,
+    shortage: 4,
+    minus: 4,
+    risk: 3,
+    alert: 3,
+    workplan20: 3,
+    workplangreater20: 3,
+    workplangreater020: 2,
+    onbudget: 1,
+    oncontrol: 1,
+    surplus: 0,
+    normal: 0,
+  };
+  const score = (value) => {
+    const key = compactKey(value);
+    return Object.entries(severity).reduce((max, [needle, itemScore]) => (key.includes(needle) ? Math.max(max, itemScore) : max), 0);
+  };
+  return score(incoming) > score(current) ? incoming : current;
+}
+
+function chooseIssueType(current, incoming) {
+  if (hasIssueText(incoming) && !["none", "na"].includes(compactKey(incoming))) return String(incoming);
+  return String(current || "None");
 }
 
 function getField(row, field) {
@@ -712,12 +873,29 @@ function normalizeDueStatus(value) {
   return "On Track";
 }
 
+function inferDueStatusFromEndDate(endDate) {
+  if (!(endDate instanceof Date) || Number.isNaN(endDate.getTime())) return "On Track";
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dueDate = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  const daysUntilDue = Math.ceil((dueDate.getTime() - todayStart.getTime()) / 86400000);
+  if (daysUntilDue < 0) return "Overdue";
+  if (daysUntilDue <= 45) return "At Risk";
+  return "On Track";
+}
+
 function normalizeSchedule(value) {
   const score = parsePlainNumber(value);
   if (String(value ?? "").trim().match(/^[1-4]$/)) {
     if (score === 1) return "Delay";
     if (score === 2) return "Potential Delay";
     if (score === 4) return "Leading";
+    return "On Time";
+  }
+  if (score > 0 && score < 10) {
+    if (score < 0.85) return "Delay";
+    if (score < 1) return "Potential Delay";
+    if (score > 1.05) return "Leading";
     return "On Time";
   }
   const normalized = compactKey(value);

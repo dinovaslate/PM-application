@@ -3,7 +3,6 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
-  Bell,
   BriefcaseBusiness,
   CalendarClock,
   CheckCircle2,
@@ -16,6 +15,7 @@ import {
   Settings2,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 import {
   Bar,
@@ -35,7 +35,7 @@ import {
   defaultRules,
   formatCurrency,
   formatPercent,
-  parseWorkbook,
+  parseWorkbooks,
   sampleProjects,
 } from "./lib/dashboardData";
 
@@ -113,6 +113,68 @@ const tabs = [
   },
 ];
 
+const CUSTOMIZATION_STORAGE_KEY = "pmo-dashboard-customization-v1";
+
+const CUSTOMIZATION_GROUPS = [
+  {
+    id: "overview",
+    title: "Executive Overview",
+    options: [
+      { id: "overview.kpi.total", label: "KPI Total Proyek" },
+      { id: "overview.kpi.healthy", label: "KPI Proyek Sehat" },
+      { id: "overview.kpi.warning", label: "KPI Peringatan" },
+      { id: "overview.kpi.needImprovement", label: "KPI Kritis" },
+      { id: "overview.kpi.overdue", label: "KPI Terlambat" },
+      { id: "overview.kpi.valueAtRisk", label: "KPI Value at Risk" },
+      { id: "overview.section.insights", label: "Smart Insights Lokal" },
+      { id: "overview.section.healthByBu", label: "Distribusi Health per BU" },
+      { id: "overview.section.workloadTrend", label: "Tren Beban Kerja PM" },
+      { id: "overview.section.priorityProjects", label: "Proyek Prioritas Tinggi" },
+    ],
+  },
+  {
+    id: "health",
+    title: "Project Health",
+    options: [
+      { id: "health.section.schedule", label: "Schedule Performance" },
+      { id: "health.section.issues", label: "Active Issues by Type" },
+      { id: "health.section.conditions", label: "Resource, Cost, dan Health Summary" },
+      { id: "health.section.healthByBu", label: "Health Berdasarkan BU" },
+      { id: "health.section.highValue", label: "High-Value Projects at Risk" },
+      { id: "health.section.detail", label: "Detail IWO, Proyek, Customer, dan PM" },
+    ],
+  },
+  {
+    id: "capacity",
+    title: "PM Capacity",
+    options: [
+      { id: "capacity.kpi.totalPm", label: "KPI Total PM Active" },
+      { id: "capacity.kpi.averageLoad", label: "KPI Average Workload" },
+      { id: "capacity.kpi.overloaded", label: "KPI Overloaded PM" },
+      { id: "capacity.kpi.highRisk", label: "KPI High-Risk Projects" },
+      { id: "capacity.section.workloadForecast", label: "Workload Forecast" },
+      { id: "capacity.section.pmPortfolio", label: "Project Load, Count, dan Cost per PM" },
+      { id: "capacity.section.costTrend", label: "Cost Exposure Trend" },
+      { id: "capacity.section.pmStatus", label: "PM Status" },
+      { id: "capacity.section.rules", label: "Rules Configuration" },
+      { id: "capacity.section.topProjectCount", label: "Top PM by Project Count" },
+      { id: "capacity.section.workloadByBu", label: "Workload Berdasarkan BU" },
+      { id: "capacity.section.riskyPm", label: "PM dengan Proyek Risky" },
+    ],
+  },
+  {
+    id: "priority",
+    title: "Priority Action List",
+    options: [
+      { id: "priority.section.filters", label: "Filter dan Export" },
+      { id: "priority.section.actionItems", label: "Actionable Items" },
+      { id: "priority.section.rules", label: "Rules Configuration" },
+    ],
+  },
+];
+
+const DEFAULT_CUSTOMIZATION = buildDefaultCustomization();
+
 export default function App() {
   const [projects, setProjects] = useState([]);
   const [rules, setRules] = useState(defaultRules);
@@ -120,6 +182,8 @@ export default function App() {
   const [sourceName, setSourceName] = useState("Belum ada data");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+  const [customization, setCustomization] = useState(loadDashboardCustomization);
   const [filters, setFilters] = useState({
     priority: "All",
     bu: "All",
@@ -128,6 +192,10 @@ export default function App() {
   });
 
   const dashboard = useMemo(() => buildDashboard(projects, rules), [projects, rules]);
+  const isWidgetVisible = useMemo(
+    () => (widgetId) => customization[widgetId] !== false,
+    [customization],
+  );
   const filterOptions = useMemo(() => getFilterOptions(dashboard.projects), [dashboard.projects]);
   const filteredProjects = useMemo(
     () =>
@@ -142,18 +210,23 @@ export default function App() {
     [dashboard.projects, filters],
   );
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEY, JSON.stringify(customization));
+  }, [customization]);
+
   async function handleFileChange(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
 
     setIsLoading(true);
     setError("");
 
     try {
-      const parsed = await parseWorkbook(file);
+      const parsed = await parseWorkbooks(files);
       if (!parsed.length) throw new Error("File tidak memiliki baris data yang bisa dibaca.");
       setProjects(parsed);
-      setSourceName(file.name);
+      setSourceName(formatSourceName(files));
       setFilters({ priority: "All", bu: "All", pm: "All", health: "All" });
     } catch (err) {
       setError(err.message || "Gagal membaca file Excel.");
@@ -161,6 +234,25 @@ export default function App() {
       setIsLoading(false);
       event.target.value = "";
     }
+  }
+
+  function handleCustomizationToggle(widgetId, isVisible) {
+    setCustomization((current) => ({
+      ...current,
+      [widgetId]: isVisible,
+    }));
+  }
+
+  function handleCustomizationReset(tabId = activeTab) {
+    const group = CUSTOMIZATION_GROUPS.find((item) => item.id === tabId);
+    if (!group) return;
+    setCustomization((current) => {
+      const next = { ...current };
+      group.options.forEach((option) => {
+        next[option.id] = true;
+      });
+      return next;
+    });
   }
 
   const ActiveView =
@@ -179,6 +271,7 @@ export default function App() {
         activeTab={activeTab}
         isLoading={isLoading}
         onFileChange={handleFileChange}
+        onOpenCustomize={() => setIsCustomizeOpen(true)}
         onResetSample={() => {
           setProjects(sampleProjects);
           setSourceName("Sample portfolio");
@@ -189,7 +282,12 @@ export default function App() {
       />
 
       <div className="min-w-0 flex-1 lg:pl-64">
-        <TopBar sourceName={sourceName} isLoading={isLoading} onFileChange={handleFileChange} />
+        <TopBar
+          sourceName={sourceName}
+          isLoading={isLoading}
+          onFileChange={handleFileChange}
+          onOpenCustomize={() => setIsCustomizeOpen(true)}
+        />
 
         <main className="mx-auto max-w-[1440px] overflow-hidden px-4 py-5 sm:px-6 lg:px-8">
           <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -199,9 +297,21 @@ export default function App() {
               </h1>
               <p className="mt-1 text-sm text-slate-500">{activeMeta.subtitle}</p>
             </div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.05em] text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              {sourceName}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-[0.05em] text-slate-500">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                <span className="max-w-[220px] truncate sm:max-w-xs">{sourceName}</span>
+              </div>
+              {projects.length ? (
+                <button
+                  type="button"
+                  onClick={() => setIsCustomizeOpen(true)}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                >
+                  <Settings2 size={14} />
+                  Customize
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -220,17 +330,28 @@ export default function App() {
               setFilters={setFilters}
               filterOptions={filterOptions}
               filteredProjects={filteredProjects}
+              isWidgetVisible={isWidgetVisible}
+              onOpenCustomize={() => setIsCustomizeOpen(true)}
             />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
           )}
         </main>
       </div>
+
+      <CustomizationPanel
+        activeTab={activeTab}
+        customization={customization}
+        isOpen={isCustomizeOpen}
+        onClose={() => setIsCustomizeOpen(false)}
+        onReset={handleCustomizationReset}
+        onToggle={handleCustomizationToggle}
+      />
     </div>
   );
 }
 
-function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onResetSample }) {
+function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onOpenCustomize, onResetSample }) {
   return (
     <aside className="w-full max-w-full border-slate-200 bg-white lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex lg:w-64 lg:flex-col lg:border-r">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 lg:h-16">
@@ -249,7 +370,7 @@ function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onResetSamp
         <label className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-bold text-white transition hover:bg-slate-800 lg:w-full">
           <Upload size={14} />
           {isLoading ? "Reading..." : "Upload Excel"}
-          <input type="file" accept=".xlsx" className="sr-only" onChange={onFileChange} disabled={isLoading} />
+          <input type="file" accept=".xlsx" multiple className="sr-only" onChange={onFileChange} disabled={isLoading} />
         </label>
         <button
           type="button"
@@ -284,9 +405,13 @@ function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onResetSamp
       </nav>
 
       <div className="hidden border-t border-slate-200 px-4 py-4 lg:block">
-        <button className="mb-2 flex h-9 w-full items-center gap-3 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-950">
+        <button
+          type="button"
+          onClick={onOpenCustomize}
+          className="mb-2 flex h-9 w-full items-center gap-3 rounded-lg px-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-950"
+        >
           <Settings2 size={15} />
-          Settings
+          Customize
         </button>
         <div className="mt-4 flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
@@ -302,7 +427,7 @@ function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onResetSamp
   );
 }
 
-function TopBar({ sourceName, isLoading, onFileChange }) {
+function TopBar({ sourceName, isLoading, onFileChange, onOpenCustomize }) {
   return (
     <header className="sticky top-0 z-20 hidden h-16 border-b border-slate-200 bg-white/95 px-8 backdrop-blur lg:flex lg:items-center lg:justify-between">
       <p className="text-base font-bold text-slate-950">PPM Intelligence</p>
@@ -321,10 +446,15 @@ function TopBar({ sourceName, isLoading, onFileChange }) {
         <label className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-bold text-white transition hover:bg-slate-800">
           <Upload size={14} />
           {isLoading ? "Reading..." : "Upload Excel"}
-          <input type="file" accept=".xlsx" className="sr-only" onChange={onFileChange} disabled={isLoading} />
+          <input type="file" accept=".xlsx" multiple className="sr-only" onChange={onFileChange} disabled={isLoading} />
         </label>
-        <button className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50">
-          <Bell size={15} />
+        <button
+          type="button"
+          onClick={onOpenCustomize}
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50"
+          aria-label="Customize dashboard"
+        >
+          <Settings2 size={15} />
         </button>
       </div>
     </header>
@@ -345,7 +475,7 @@ function EmptyDashboard({ isLoading, onFileChange }) {
         <label className="mx-auto mt-6 inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-md bg-slate-950 px-5 text-sm font-bold text-white transition hover:bg-slate-800">
           <Upload size={16} />
           {isLoading ? "Reading..." : "Upload Excel"}
-          <input type="file" accept=".xlsx" className="sr-only" onChange={onFileChange} disabled={isLoading} />
+          <input type="file" accept=".xlsx" multiple className="sr-only" onChange={onFileChange} disabled={isLoading} />
         </label>
         <div className="mt-6 rounded-xl bg-slate-50 p-4 text-left text-xs leading-5 text-slate-600">
           <p className="font-bold text-slate-800">Kolom minimal yang disarankan:</p>
@@ -358,57 +488,194 @@ function EmptyDashboard({ isLoading, onFileChange }) {
   );
 }
 
-function ExecutiveOverview({ dashboard }) {
+function CustomizationPanel({ activeTab, customization, isOpen, onClose, onReset, onToggle }) {
+  if (!isOpen) return null;
+
+  const activeGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === activeTab);
+  const groups = [
+    ...(activeGroup ? [activeGroup] : []),
+    ...CUSTOMIZATION_GROUPS.filter((group) => group.id !== activeTab),
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button type="button" className="absolute inset-0 bg-slate-950/30" aria-label="Close customize panel" onClick={onClose} />
+      <aside className="relative z-10 flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <p className="text-base font-bold text-slate-950">Customize Dashboard</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Pilih KPI dan section yang mau ditampilkan. Setting tersimpan otomatis.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="space-y-5">
+            {groups.map((group) => {
+              const visibleCount = group.options.filter((option) => customization[option.id] !== false).length;
+              return (
+                <section key={group.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-slate-950">{group.title}</p>
+                      <p className="text-xs text-slate-500">{visibleCount} dari {group.options.length} aktif</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onReset(group.id)}
+                      className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {group.options.map((option) => {
+                      const checked = customization[option.id] !== false;
+                      return (
+                        <label key={option.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm shadow-sm">
+                          <span className="min-w-0 font-semibold text-slate-700">{option.label}</span>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 shrink-0 accent-slate-950"
+                            checked={checked}
+                            onChange={(event) => onToggle(option.id, event.target.checked)}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="border-t border-slate-200 px-5 py-4">
+          <button type="button" onClick={onClose} className="h-10 w-full rounded-md bg-slate-950 px-4 text-sm font-bold text-white">
+            Done
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function NoVisibleWidgets({ onOpenCustomize }) {
+  return (
+    <section className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)]">
+      <p className="text-sm font-bold text-slate-950">Semua widget di halaman ini sedang disembunyikan.</p>
+      <button
+        type="button"
+        onClick={onOpenCustomize}
+        className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-bold text-white"
+      >
+        <Settings2 size={14} />
+        Customize
+      </button>
+    </section>
+  );
+}
+
+function SmartInsights({ dashboard }) {
+  const insights = useMemo(() => buildSmartInsights(dashboard), [dashboard]);
+
+  return (
+    <Panel title="Smart Insights" action="Local">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {insights.map((insight) => (
+          <div key={insight.title} className={`rounded-xl border px-4 py-3 ${insight.tone}`}>
+            <p className="text-[10px] font-bold uppercase tracking-[0.05em] opacity-75">{insight.label}</p>
+            <p className="mt-2 text-lg font-bold">{insight.title}</p>
+            <p className="mt-1 text-xs leading-5 opacity-80">{insight.detail}</p>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize }) {
   const { kpis, charts, priorityProjects } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
   const workloadLabels = getWorkloadMetricLabels(workloadMode);
   const workloadTrendData = toPortfolioWorkloadSeries(charts.pmWorkloadTrend, months, workloadLabels);
   const isProxyWorkload = workloadMode === "proxy";
+  const kpiCards = [
+    { id: "overview.kpi.total", title: "Total", value: kpis.totalProjects, icon: BriefcaseBusiness, tone: "slate" },
+    { id: "overview.kpi.healthy", title: "Sehat", value: kpis.healthy, icon: CheckCircle2, tone: "green" },
+    { id: "overview.kpi.warning", title: "Peringatan", value: kpis.warning, icon: AlertTriangle, tone: "amber" },
+    { id: "overview.kpi.needImprovement", title: "Kritis", value: kpis.needImprovement, icon: AlertTriangle, tone: "red" },
+    { id: "overview.kpi.overdue", title: "Terlambat", value: kpis.overdue, icon: CalendarClock, tone: "red" },
+    { id: "overview.kpi.valueAtRisk", title: "Value at Risk", value: formatCurrency(kpis.valueAtRisk), icon: LineChartIcon, tone: "slate" },
+  ].filter((card) => isWidgetVisible(card.id));
+  const showInsights = isWidgetVisible("overview.section.insights");
+  const showHealthByBu = isWidgetVisible("overview.section.healthByBu");
+  const showWorkloadTrend = isWidgetVisible("overview.section.workloadTrend");
+  const showPriorityProjects = isWidgetVisible("overview.section.priorityProjects");
+  const hasVisibleWidgets = kpiCards.length || showInsights || showHealthByBu || showWorkloadTrend || showPriorityProjects;
 
   return (
     <div className="min-w-0 space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <KpiCard title="Total" value={kpis.totalProjects} icon={BriefcaseBusiness} tone="slate" />
-        <KpiCard title="Sehat" value={kpis.healthy} icon={CheckCircle2} tone="green" />
-        <KpiCard title="Peringatan" value={kpis.warning} icon={AlertTriangle} tone="amber" />
-        <KpiCard title="Kritis" value={kpis.needImprovement} icon={AlertTriangle} tone="red" />
-        <KpiCard title="Terlambat" value={kpis.overdue} icon={CalendarClock} tone="red" />
-        <KpiCard title="Value at Risk" value={formatCurrency(kpis.valueAtRisk)} icon={LineChartIcon} tone="slate" />
-      </div>
+      {kpiCards.length ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          {kpiCards.map((card) => (
+            <KpiCard key={card.id} title={card.title} value={card.value} icon={card.icon} tone={card.tone} />
+          ))}
+        </div>
+      ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <Panel title="Distribusi Project Berdasarkan Unit Bisnis" action="Health">
-          <HealthByBuVisualization data={charts.healthByBu} />
-        </Panel>
+      {showInsights ? <SmartInsights dashboard={dashboard} /> : null}
 
-        <Panel title={isProxyWorkload ? "Tren Active Project PM sampai Desember" : "Tren Beban Kerja PM sampai Desember"} action={getWorkloadAction(workloadMode)}>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={workloadTrendData}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-              <XAxis dataKey="name" tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={(value) => formatWorkloadAxis(value, workloadMode)} tickLine={false} axisLine={false} />
-              <Tooltip content={<ChartTooltip workloadMode={workloadMode} />} />
-              <Line type="monotone" dataKey={workloadLabels.average} stroke="#2563eb" strokeWidth={2.6} dot={false} />
-              <Line type="monotone" dataKey={workloadLabels.peak} stroke="#ef4444" strokeWidth={2.6} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-          {workloadMode !== "live" ? (
-            <p className="mt-2 text-xs text-slate-500">
-              {getWorkloadMessage(workloadMode)}
-            </p>
+      {showHealthByBu || showWorkloadTrend ? (
+        <div className={`grid gap-5 ${showHealthByBu && showWorkloadTrend ? "lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]" : ""}`}>
+          {showHealthByBu ? (
+            <Panel title="Distribusi Project Berdasarkan Unit Bisnis" action="Health">
+              <HealthByBuVisualization data={charts.healthByBu} />
+            </Panel>
           ) : null}
-        </Panel>
-      </div>
 
-      <Panel title="Status Proyek Prioritas Tinggi" action="Lihat Semua">
-        <ProjectTable projects={priorityProjects} compact workloadMode={workloadMode} />
-      </Panel>
+          {showWorkloadTrend ? (
+            <Panel title={isProxyWorkload ? "Tren Active Project PM sampai Desember" : "Tren Beban Kerja PM sampai Desember"} action={getWorkloadAction(workloadMode)}>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={workloadTrendData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                  <YAxis tickFormatter={(value) => formatWorkloadAxis(value, workloadMode)} tickLine={false} axisLine={false} />
+                  <Tooltip content={<ChartTooltip workloadMode={workloadMode} />} />
+                  <Line type="monotone" dataKey={workloadLabels.average} stroke="#2563eb" strokeWidth={2.6} dot={false} />
+                  <Line type="monotone" dataKey={workloadLabels.peak} stroke="#ef4444" strokeWidth={2.6} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+              {workloadMode !== "live" ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  {getWorkloadMessage(workloadMode)}
+                </p>
+              ) : null}
+            </Panel>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showPriorityProjects ? (
+        <Panel title="Status Proyek Prioritas Tinggi" action="Lihat Semua">
+          <ProjectTable projects={priorityProjects} compact workloadMode={workloadMode} />
+        </Panel>
+      ) : null}
+
+      {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
 
-function ProjectHealthAnalysis({ dashboard }) {
+function ProjectHealthAnalysis({ dashboard, isWidgetVisible, onOpenCustomize }) {
   const { charts, troubledHighValueProjects, projects } = dashboard;
   const scheduleTotal = charts.scheduleDistribution.reduce((sum, item) => sum + item.value, 0);
   const scheduleMap = Object.fromEntries(charts.scheduleDistribution.map((item) => [item.name, item.value]));
@@ -421,89 +688,114 @@ function ProjectHealthAnalysis({ dashboard }) {
   const maxIssueCount = Math.max(...charts.issueByType.map((issue) => issue.value), 1);
   const hasScheduleData = (dashboard.dataQuality?.scheduleInputCount || 0) > 0;
   const hasIssueData = (dashboard.dataQuality?.issueInputCount || 0) > 0;
+  const showSchedule = isWidgetVisible("health.section.schedule");
+  const showIssues = isWidgetVisible("health.section.issues");
+  const showConditions = isWidgetVisible("health.section.conditions");
+  const showHealthByBu = isWidgetVisible("health.section.healthByBu");
+  const showHighValue = isWidgetVisible("health.section.highValue");
+  const showDetail = isWidgetVisible("health.section.detail");
+  const hasVisibleWidgets = showSchedule || showIssues || showConditions || showHealthByBu || showHighValue || showDetail;
 
   return (
     <div className="min-w-0 space-y-6">
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
-        <Panel title="Schedule Performance" action={hasScheduleData ? `${scheduleTotal} records` : "No schedule data"}>
-          {hasScheduleData ? (
-            <ScheduleBreakdown rows={scheduleRows} total={scheduleTotal} />
-          ) : (
-            <MissingDataState
-              compact
-              title="Schedule data belum tersedia"
-              description="Kolom schedule tidak ditemukan atau kosong, jadi dashboard tidak akan menebak semua proyek On Time."
-            />
-          )}
-        </Panel>
-
-        <Panel title="Active Issues by Type" action={hasIssueData ? `${issueTotal} issues` : "No issue data"}>
-          {issueTotal > 0 ? (
-            <div className="space-y-4">
-              {charts.issueByType.slice(0, 4).map((item, index) => (
-                <ProgressRow
-                  key={item.name}
-                  label={item.name}
-                  value={item.value}
-                  max={maxIssueCount}
-                  color={ISSUE_COLORS[index % ISSUE_COLORS.length]}
+      {showSchedule || showIssues ? (
+        <div className={`grid gap-5 ${showSchedule && showIssues ? "xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]" : ""}`}>
+          {showSchedule ? (
+            <Panel title="Schedule Performance" action={hasScheduleData ? `${scheduleTotal} records` : "No schedule data"}>
+              {hasScheduleData ? (
+                <ScheduleBreakdown rows={scheduleRows} total={scheduleTotal} />
+              ) : (
+                <MissingDataState
+                  compact
+                  title="Schedule data belum tersedia"
+                  description="Kolom schedule tidak ditemukan atau kosong, jadi dashboard tidak akan menebak semua proyek On Time."
                 />
-              ))}
-            </div>
-          ) : (
-            <MissingDataState
-              compact
-              title={hasIssueData ? "Tidak ada active issue" : "Issue data belum tersedia"}
-              description={
-                hasIssueData
-                  ? "Kolom issue terbaca, dan semua project memiliki open issue 0."
-                  : "Tambahkan kolom Open Issue dan Issue Type untuk melihat distribusi masalah."
-              }
-            />
-          )}
+              )}
+            </Panel>
+          ) : null}
+
+          {showIssues ? (
+            <Panel title="Active Issues by Type" action={hasIssueData ? `${issueTotal} issues` : "No issue data"}>
+              {issueTotal > 0 ? (
+                <div className="space-y-4">
+                  {charts.issueByType.slice(0, 4).map((item, index) => (
+                    <ProgressRow
+                      key={item.name}
+                      label={item.name}
+                      value={item.value}
+                      max={maxIssueCount}
+                      color={ISSUE_COLORS[index % ISSUE_COLORS.length]}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <MissingDataState
+                  compact
+                  title={hasIssueData ? "Tidak ada active issue" : "Issue data belum tersedia"}
+                  description={
+                    hasIssueData
+                      ? "Kolom issue terbaca, dan semua project memiliki open issue 0."
+                      : "Tambahkan kolom Open Issue dan Issue Type untuk melihat distribusi masalah."
+                  }
+                />
+              )}
+            </Panel>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showConditions ? (
+        <div className="grid gap-4 md:grid-cols-3">
+          <MiniInsight title="Resource Condition" data={charts.resourceDistribution} />
+          <MiniInsight title="Cost Condition" data={charts.costDistribution} />
+          <MiniInsight title="Health Distribution" data={charts.healthDistribution} />
+        </div>
+      ) : null}
+
+      {showHealthByBu ? (
+        <Panel title="Health Berdasarkan BU">
+          <HealthByBuVisualization data={charts.healthByBu} />
         </Panel>
-      </div>
+      ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <MiniInsight title="Resource Condition" data={charts.resourceDistribution} />
-        <MiniInsight title="Cost Condition" data={charts.costDistribution} />
-        <MiniInsight title="Health Distribution" data={charts.healthDistribution} />
-      </div>
-
-      <Panel title="Health Berdasarkan BU">
-        <HealthByBuVisualization data={charts.healthByBu} />
-      </Panel>
-
-      <div className="grid gap-5">
-        <Panel title="High-Value Projects at Risk" action="Value">
-          <div className="space-y-3">
-            {troubledHighValueProjects.map((project) => (
-              <div key={project.id} className="rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-950">{project.project}</p>
-                    <p className="mt-1 text-xs text-slate-500">{project.customer}</p>
+      {showHighValue || showDetail ? (
+        <div className="grid gap-5">
+          {showHighValue ? (
+            <Panel title="High-Value Projects at Risk" action="Value">
+              <div className="space-y-3">
+                {troubledHighValueProjects.map((project) => (
+                  <div key={project.id} className="rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-slate-950">{project.project}</p>
+                        <p className="mt-1 text-xs text-slate-500">{project.customer}</p>
+                      </div>
+                      <PriorityBadge priority={project.priority} />
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-sm">
+                      <span className="font-bold text-slate-950">{formatCurrency(project.value)}</span>
+                      <span className="text-slate-500">{project.openIssue} issue</span>
+                    </div>
                   </div>
-                  <PriorityBadge priority={project.priority} />
-                </div>
-                <div className="mt-3 flex items-center justify-between text-sm">
-                  <span className="font-bold text-slate-950">{formatCurrency(project.value)}</span>
-                  <span className="text-slate-500">{project.openIssue} issue</span>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </Panel>
+            </Panel>
+          ) : null}
 
-        <Panel title="Detail per IWO, Proyek, Customer, dan PM">
-          <ProjectTable projects={projects} compact workloadMode={dashboard.dataQuality?.workloadMode || "live"} />
-        </Panel>
-      </div>
+          {showDetail ? (
+            <Panel title="Detail per IWO, Proyek, Customer, dan PM">
+              <ProjectTable projects={projects} compact workloadMode={dashboard.dataQuality?.workloadMode || "live"} />
+            </Panel>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
 
-function PmCapacity({ dashboard, rules, setRules }) {
+function PmCapacity({ dashboard, rules, setRules, isWidgetVisible, onOpenCustomize }) {
   const { charts, pmRiskList } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -521,164 +813,225 @@ function PmCapacity({ dashboard, rules, setRules }) {
   const averageWorkload =
     charts.pmWorkloadTrend.reduce((sum, pm) => sum + averageMonthlyValue(pm, months), 0) /
     Math.max(charts.pmWorkloadTrend.length, 1);
+  const kpiCards = [
+    { id: "capacity.kpi.totalPm", title: "Total PM Active", value: charts.pmWorkloadTrend.length, icon: Users, tone: "slate" },
+    {
+      id: "capacity.kpi.averageLoad",
+      title: isProxyWorkload ? "Avg Active Projects" : "Average Workload",
+      value: formatWorkloadValue(averageWorkload, workloadMode, { decimals: 1 }),
+      icon: Activity,
+      tone: "red",
+    },
+    {
+      id: "capacity.kpi.overloaded",
+      title: isProxyWorkload ? "PM > 1 Active Project" : "Overloaded PM",
+      value: dashboard.kpis.overloadedPms,
+      icon: AlertTriangle,
+      tone: "red",
+    },
+    { id: "capacity.kpi.highRisk", title: "High-Risk Projects", value: dashboard.kpis.openIssueProjects, icon: CalendarClock, tone: "amber" },
+  ].filter((card) => isWidgetVisible(card.id));
+  const showWorkloadForecast = isWidgetVisible("capacity.section.workloadForecast");
+  const showPmPortfolio = isWidgetVisible("capacity.section.pmPortfolio");
+  const showCostTrend = isWidgetVisible("capacity.section.costTrend");
+  const showPmStatus = isWidgetVisible("capacity.section.pmStatus");
+  const showRules = isWidgetVisible("capacity.section.rules");
+  const showTopProjectCount = isWidgetVisible("capacity.section.topProjectCount");
+  const showWorkloadByBu = isWidgetVisible("capacity.section.workloadByBu");
+  const showRiskyPm = isWidgetVisible("capacity.section.riskyPm");
+  const showLowerLeft = showCostTrend || showPmStatus || showRules;
+  const showLowerRight = showTopProjectCount || showWorkloadByBu || showRiskyPm;
+  const hasVisibleWidgets = kpiCards.length || showWorkloadForecast || showPmPortfolio || showLowerLeft || showLowerRight;
 
   return (
     <div className="min-w-0 space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <KpiCard title="Total PM Active" value={charts.pmWorkloadTrend.length} icon={Users} tone="slate" />
-        <KpiCard
-          title={isProxyWorkload ? "Avg Active Projects" : "Average Workload"}
-          value={formatWorkloadValue(averageWorkload, workloadMode, { decimals: 1 })}
-          icon={Activity}
-          tone="red"
-        />
-        <KpiCard title={isProxyWorkload ? "PM > 1 Active Project" : "Overloaded PM"} value={dashboard.kpis.overloadedPms} icon={AlertTriangle} tone="red" />
-        <KpiCard title="High-Risk Projects" value={dashboard.kpis.openIssueProjects} icon={CalendarClock} tone="amber" />
-      </div>
-
-      <Panel title={isProxyWorkload ? "Active Project Forecast sampai Desember" : "Workload Forecast sampai Desember"} action={getWorkloadAction(workloadMode)}>
-        <CriticalLoadStrip rows={topCriticalPms} workloadMode={workloadMode} />
-        <WorkloadHeatmap rows={charts.pmWorkloadTrend} rules={rules} projectCountMap={projectCountMap} months={months} workloadMode={workloadMode} />
-        {workloadMode !== "live" ? (
-          <p className="mt-3 text-xs text-slate-500">
-            {getWorkloadMessage(workloadMode)}
-          </p>
-        ) : null}
-      </Panel>
-
-      <Panel title="Project Load, Count, dan Cost per PM" action={isProxyWorkload ? "Active Projects" : "Primary"}>
-        <PmPortfolioTable rows={charts.pmPortfolioSummary} workloadRows={charts.pmWorkloadTrend} months={months} workloadMode={workloadMode} />
-      </Panel>
-
-      <div className="grid min-w-0 items-start gap-5 overflow-hidden xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
-        <div className="space-y-5">
-          <Panel title="Cost Exposure Trend sampai Desember" action={hasCostData ? "Rp" : "No Cost Data"}>
-            {hasCostData ? (
-              <>
-                <div className="mb-3 flex justify-end">
-                  <select
-                    className="h-9 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700"
-                    value={selectedCostPm}
-                    onChange={(event) => setSelectedCostPm(event.target.value)}
-                  >
-                    <option value="TOTAL">Total Portfolio</option>
-                    {charts.pmCostTrend.map((pm) => (
-                      <option key={pm.pm} value={pm.pm}>
-                        {pm.pm}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="min-w-0 overflow-hidden">
-                  <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={costTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                      <YAxis width={76} tickFormatter={(value) => formatCurrency(value).replace("Rp ", "")} tickLine={false} axisLine={false} />
-                      <Tooltip content={<ChartTooltip currency />} />
-                      <Line type="monotone" dataKey="Cost Exposure" stroke="#0f172a" strokeWidth={2.8} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </>
-            ) : (
-              <MissingDataState
-                title="Cost data belum tersedia"
-                description="Tambahkan kolom Cost, Project Cost, Budget, Value, atau Cost Jan-Des agar trend cost per PM bisa dihitung."
-              />
-            )}
-          </Panel>
-
-          <Panel title="PM Status">
-            <StatusSummaryCards data={charts.pmStatusDistribution} compact />
-          </Panel>
-
-          <Panel title="Rules Configuration">
-            <RulePanelContent rules={rules} setRules={setRules} />
-          </Panel>
+      {kpiCards.length ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {kpiCards.map((card) => (
+            <KpiCard key={card.id} title={card.title} value={card.value} icon={card.icon} tone={card.tone} />
+          ))}
         </div>
+      ) : null}
 
-        <div className="space-y-5">
-          <Panel title="Top PM by Project Count" action="Top 10">
-            <RankedBars data={topPmProjectCounts} valueKey="value" labelKey="name" valueFormatter={(value) => `${value} proyek`} />
-          </Panel>
+      {showWorkloadForecast ? (
+        <Panel title={isProxyWorkload ? "Active Project Forecast sampai Desember" : "Workload Forecast sampai Desember"} action={getWorkloadAction(workloadMode)}>
+          <CriticalLoadStrip rows={topCriticalPms} workloadMode={workloadMode} />
+          <WorkloadHeatmap rows={charts.pmWorkloadTrend} rules={rules} projectCountMap={projectCountMap} months={months} workloadMode={workloadMode} />
+          {workloadMode !== "live" ? (
+            <p className="mt-3 text-xs text-slate-500">
+              {getWorkloadMessage(workloadMode)}
+            </p>
+          ) : null}
+        </Panel>
+      ) : null}
 
-          <Panel title={isProxyWorkload ? "Active Project Berdasarkan BU" : "Workload Berdasarkan BU"}>
-            <RankedBars
-              data={charts.workloadByBu}
-              valueKey="workload"
-              labelKey="name"
-              valueFormatter={(value) => formatWorkloadValue(value, workloadMode, { decimals: 1 })}
-              maxValue={isProxyWorkload ? undefined : 1}
-            />
-          </Panel>
+      {showPmPortfolio ? (
+        <Panel title="Project Load, Count, dan Cost per PM" action={isProxyWorkload ? "Active Projects" : "Primary"}>
+          <PmPortfolioTable rows={charts.pmPortfolioSummary} workloadRows={charts.pmWorkloadTrend} months={months} workloadMode={workloadMode} />
+        </Panel>
+      ) : null}
 
-          <Panel title="PM dengan Proyek Risky">
-            <div className="space-y-3">
-              {topRiskyPms.map((pm) => (
-                <div key={pm.pm} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-950" title={pm.pm}>{pm.pm}</p>
-                    <p className="text-xs text-slate-500">{pm.projects} proyek</p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-bold text-red-700">{pm.riskyProjects} risky</p>
-                    <p className="text-xs text-slate-500">{pm.overdueProjects} overdue</p>
-                  </div>
-                </div>
-              ))}
+      {showLowerLeft || showLowerRight ? (
+        <div className={`grid min-w-0 items-start gap-5 overflow-hidden ${showLowerLeft && showLowerRight ? "xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]" : ""}`}>
+          {showLowerLeft ? (
+            <div className="space-y-5">
+              {showCostTrend ? (
+                <Panel title="Cost Exposure Trend sampai Desember" action={hasCostData ? "Rp" : "No Cost Data"}>
+                  {hasCostData ? (
+                    <>
+                      <div className="mb-3 flex min-w-0 justify-end">
+                        <select
+                          className="h-9 w-full min-w-0 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 sm:w-auto"
+                          value={selectedCostPm}
+                          onChange={(event) => setSelectedCostPm(event.target.value)}
+                        >
+                          <option value="TOTAL">Total Portfolio</option>
+                          {charts.pmCostTrend.map((pm) => (
+                            <option key={pm.pm} value={pm.pm}>
+                              {pm.pm}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="min-w-0 overflow-hidden">
+                        <ResponsiveContainer width="100%" height={240}>
+                          <LineChart data={costTrendData}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                            <YAxis width={76} tickFormatter={(value) => formatCurrency(value).replace("Rp ", "")} tickLine={false} axisLine={false} />
+                            <Tooltip content={<ChartTooltip currency />} />
+                            <Line type="monotone" dataKey="Cost Exposure" stroke="#0f172a" strokeWidth={2.8} dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </>
+                  ) : (
+                    <MissingDataState
+                      title="Cost data belum tersedia"
+                      description="Tambahkan kolom Cost, Project Cost, Budget, Value, atau Cost Jan-Des agar trend cost per PM bisa dihitung."
+                    />
+                  )}
+                </Panel>
+              ) : null}
+
+              {showPmStatus ? (
+                <Panel title="PM Status">
+                  <StatusSummaryCards data={charts.pmStatusDistribution} compact />
+                </Panel>
+              ) : null}
+
+              {showRules ? (
+                <Panel title="Rules Configuration">
+                  <RulePanelContent rules={rules} setRules={setRules} />
+                </Panel>
+              ) : null}
             </div>
-          </Panel>
+          ) : null}
+
+          {showLowerRight ? (
+            <div className="space-y-5">
+              {showTopProjectCount ? (
+                <Panel title="Top PM by Project Count" action="Top 10">
+                  <RankedBars data={topPmProjectCounts} valueKey="value" labelKey="name" valueFormatter={(value) => `${value} proyek`} />
+                </Panel>
+              ) : null}
+
+              {showWorkloadByBu ? (
+                <Panel title={isProxyWorkload ? "Active Project Berdasarkan BU" : "Workload Berdasarkan BU"}>
+                  <RankedBars
+                    data={charts.workloadByBu}
+                    valueKey="workload"
+                    labelKey="name"
+                    valueFormatter={(value) => formatWorkloadValue(value, workloadMode, { decimals: 1 })}
+                    maxValue={isProxyWorkload ? undefined : 1}
+                  />
+                </Panel>
+              ) : null}
+
+              {showRiskyPm ? (
+                <Panel title="PM dengan Proyek Risky">
+                  <div className="space-y-3">
+                    {topRiskyPms.map((pm) => (
+                      <div key={pm.pm} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-950" title={pm.pm}>{pm.pm}</p>
+                          <p className="text-xs text-slate-500">{pm.projects} proyek</p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-bold text-red-700">{pm.riskyProjects} risky</p>
+                          <p className="text-xs text-slate-500">{pm.overdueProjects} overdue</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      </div>
+      ) : null}
+
+      {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
 
-function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, filterOptions, rules, setRules }) {
+function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, filterOptions, rules, setRules, isWidgetVisible, onOpenCustomize }) {
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
+  const showFilters = isWidgetVisible("priority.section.filters");
+  const showActionItems = isWidgetVisible("priority.section.actionItems");
+  const showRules = isWidgetVisible("priority.section.rules");
+  const hasVisibleWidgets = showFilters || showActionItems || showRules;
 
   return (
     <div className="min-w-0 space-y-6">
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)] xl:flex-row xl:items-center xl:justify-between">
-        <div className="grid flex-1 gap-3 md:grid-cols-4">
-          <FilterSelect
-            label="Priority"
-            value={filters.priority}
-            options={["All", "Critical", "High", "Medium", "Normal"]}
-            onChange={(value) => setFilters((current) => ({ ...current, priority: value }))}
-          />
-          <FilterSelect
-            label="BU"
-            value={filters.bu}
-            options={["All", ...filterOptions.bu]}
-            onChange={(value) => setFilters((current) => ({ ...current, bu: value }))}
-          />
-          <FilterSelect
-            label="PM"
-            value={filters.pm}
-            options={["All", ...filterOptions.pm]}
-            onChange={(value) => setFilters((current) => ({ ...current, pm: value }))}
-          />
-          <FilterSelect
-            label="Health"
-            value={filters.health}
-            options={["All", "Healthy", "Warning", "Need Improvement"]}
-            onChange={(value) => setFilters((current) => ({ ...current, health: value }))}
-          />
+      {showFilters ? (
+        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)] xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid flex-1 gap-3 md:grid-cols-4">
+            <FilterSelect
+              label="Priority"
+              value={filters.priority}
+              options={["All", "Critical", "High", "Medium", "Normal"]}
+              onChange={(value) => setFilters((current) => ({ ...current, priority: value }))}
+            />
+            <FilterSelect
+              label="BU"
+              value={filters.bu}
+              options={["All", ...filterOptions.bu]}
+              onChange={(value) => setFilters((current) => ({ ...current, bu: value }))}
+            />
+            <FilterSelect
+              label="PM"
+              value={filters.pm}
+              options={["All", ...filterOptions.pm]}
+              onChange={(value) => setFilters((current) => ({ ...current, pm: value }))}
+            />
+            <FilterSelect
+              label="Health"
+              value={filters.health}
+              options={["All", "Healthy", "Warning", "Need Improvement"]}
+              onChange={(value) => setFilters((current) => ({ ...current, health: value }))}
+            />
+          </div>
+          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-bold text-white">
+            <Download size={14} />
+            Export Data
+          </button>
         </div>
-        <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-bold text-white">
-          <Download size={14} />
-          Export Data
-        </button>
-      </div>
+      ) : null}
 
-      <div className="grid gap-5">
-        <Panel title="Actionable Items">
-          <ProjectTable projects={filteredProjects} workloadMode={workloadMode} />
-        </Panel>
-        <RulePanel rules={rules} setRules={setRules} />
-      </div>
+      {showActionItems || showRules ? (
+        <div className="grid gap-5">
+          {showActionItems ? (
+            <Panel title="Actionable Items">
+              <ProjectTable projects={filteredProjects} workloadMode={workloadMode} />
+            </Panel>
+          ) : null}
+          {showRules ? <RulePanel rules={rules} setRules={setRules} /> : null}
+        </div>
+      ) : null}
+
+      {!hasVisibleWidgets ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
     </div>
   );
 }
@@ -746,7 +1099,7 @@ function KpiCard({ title, value, icon: Icon, tone }) {
           <Icon size={16} strokeWidth={1.8} />
         </div>
       </div>
-      <p className="mt-3 truncate text-2xl font-bold tracking-normal text-slate-950">{value}</p>
+      <p className="mt-3 break-words text-xl font-bold tracking-normal text-slate-950 2xl:text-2xl">{value}</p>
     </div>
   );
 }
@@ -806,8 +1159,7 @@ function HealthByBuVisualization({ data }) {
               dataKey="name"
               tickLine={false}
               axisLine={false}
-              interval={0}
-              tickFormatter={shortenBuLabel}
+              tickFormatter={(value) => shortenBuLabel(value, 10)}
             />
             <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
             <Tooltip content={<ChartTooltip />} />
@@ -868,9 +1220,9 @@ function HealthByBuList({ data }) {
   );
 }
 
-function shortenBuLabel(value) {
+function shortenBuLabel(value, maxLength = 18) {
   const text = String(value || "");
-  return text.length > 18 ? `${text.slice(0, 16)}...` : text;
+  return text.length > maxLength ? `${text.slice(0, Math.max(maxLength - 2, 4))}...` : text;
 }
 
 function getTopStackKey(row, keys) {
@@ -1738,6 +2090,100 @@ function getFilterOptions(projects) {
 
 function uniqueSorted(values) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function buildDefaultCustomization() {
+  return CUSTOMIZATION_GROUPS.reduce((settings, group) => {
+    group.options.forEach((option) => {
+      settings[option.id] = true;
+    });
+    return settings;
+  }, {});
+}
+
+function loadDashboardCustomization() {
+  if (typeof window === "undefined") return DEFAULT_CUSTOMIZATION;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CUSTOMIZATION_STORAGE_KEY) || "{}");
+    return { ...DEFAULT_CUSTOMIZATION, ...stored };
+  } catch {
+    return DEFAULT_CUSTOMIZATION;
+  }
+}
+
+function formatSourceName(files) {
+  const names = files.map((file) => file.name).filter(Boolean);
+  if (names.length <= 1) return names[0] || "Excel upload";
+  const preview = names.slice(0, 2).join(", ");
+  return names.length > 2 ? `${names.length} files: ${preview}, ...` : `${names.length} files: ${preview}`;
+}
+
+function buildSmartInsights(dashboard) {
+  const { kpis, projects, charts, pmRiskList } = dashboard;
+  const criticalProjects = projects.filter((project) => project.priority === "Critical");
+  const warningValue = projects
+    .filter((project) => project.health !== "Healthy" || project.dueStatus === "Overdue")
+    .reduce((sum, project) => sum + (project.value || 0), 0);
+  const topRiskBu = [...charts.healthByBu]
+    .map((row) => ({
+      name: row.name,
+      risk: (row.Warning || 0) + (row["Need Improvement"] || 0),
+      total: HEALTH_STACK_KEYS.reduce((sum, key) => sum + (row[key] || 0), 0),
+    }))
+    .sort((a, b) => b.risk - a.risk)[0];
+  const topPm = pmRiskList[0];
+  const topCostPm = [...charts.pmPortfolioSummary].sort((a, b) => b.costExposure - a.costExposure)[0];
+  const hasDataGaps =
+    dashboard.dataQuality.workloadMode !== "live" ||
+    dashboard.dataQuality.scheduleInputCount < projects.length ||
+    dashboard.dataQuality.costInputCount < projects.length;
+
+  return [
+    {
+      label: "Prioritas",
+      title: `${criticalProjects.length} critical`,
+      detail:
+        criticalProjects.length > 0
+          ? `${criticalProjects[0].project} perlu dilihat dulu karena kombinasi health, due, schedule, dan load.`
+          : "Tidak ada proyek critical dari rule saat ini.",
+      tone: criticalProjects.length ? "border-red-100 bg-red-50 text-red-800" : "border-emerald-100 bg-emerald-50 text-emerald-800",
+    },
+    {
+      label: "Value risk",
+      title: formatCurrency(warningValue || kpis.valueAtRisk),
+      detail: `${kpis.overdue} proyek overdue dan ${kpis.warning + kpis.needImprovement} proyek tidak healthy.`,
+      tone: warningValue ? "border-amber-100 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-700",
+    },
+    {
+      label: "PM focus",
+      title: topPm ? topPm.pm : "No risky PM",
+      detail: topPm
+        ? `${topPm.riskyProjects} proyek risky, ${topPm.overdueProjects} overdue, ${topPm.projects} proyek total.`
+        : "Tidak ada PM dengan kombinasi risiko tinggi.",
+      tone: topPm?.riskyProjects ? "border-red-100 bg-red-50 text-red-800" : "border-slate-200 bg-slate-50 text-slate-700",
+    },
+    {
+      label: hasDataGaps ? "Data quality" : "Cost focus",
+      title: hasDataGaps ? "Proxy aktif" : topCostPm?.pm || "Cost OK",
+      detail: hasDataGaps ? getDataQualityInsight(dashboard.dataQuality, projects.length) : `${topCostPm?.pm || "PM"} memegang exposure ${formatCurrency(topCostPm?.costExposure || 0)}.`,
+      tone: hasDataGaps ? "border-blue-100 bg-blue-50 text-blue-800" : "border-slate-200 bg-slate-50 text-slate-700",
+    },
+  ].map((insight) => {
+    if (insight.label !== "Value risk" || !topRiskBu) return insight;
+    return {
+      ...insight,
+      detail: `${insight.detail} BU terbesar: ${topRiskBu.name} (${topRiskBu.risk}/${topRiskBu.total} risky).`,
+    };
+  });
+}
+
+function getDataQualityInsight(dataQuality, totalProjects) {
+  if (dataQuality.workloadMode !== "live") return getWorkloadMessage(dataQuality.workloadMode);
+  const missing = [];
+  if (dataQuality.scheduleInputCount < totalProjects) missing.push("schedule");
+  if (dataQuality.costInputCount < totalProjects) missing.push("cost");
+  if (dataQuality.issueInputCount < totalProjects) missing.push("issue");
+  return `Sebagian data ${missing.join(", ")} kosong, jadi insight memakai kolom yang tersedia saja.`;
 }
 
 const linePalette = ["#0f172a", "#2563eb", "#64748b", "#f59e0b", "#ef4444", "#16a34a", "#7c3aed"];
