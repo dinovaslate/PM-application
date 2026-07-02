@@ -43,13 +43,15 @@ const HEALTH_COLORS = {
   Healthy: "#22c55e",
   Warning: "#f59e0b",
   "Need Improvement": "#ef4444",
+  Unknown: "#94a3b8",
 };
 
-const HEALTH_STACK_KEYS = ["Healthy", "Warning", "Need Improvement"];
+const HEALTH_STACK_KEYS = ["Healthy", "Warning", "Need Improvement", "Unknown"];
 const HEALTH_SHORT_LABELS = {
   Healthy: "Healthy",
   Warning: "Warning",
   "Need Improvement": "Need Impr.",
+  Unknown: "Unknown",
 };
 
 const DUE_COLORS = {
@@ -1105,7 +1107,7 @@ function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, 
             <FilterSelect
               label="Health"
               value={filters.health}
-              options={["All", "Healthy", "Warning", "Need Improvement"]}
+              options={["All", "Healthy", "Warning", "Need Improvement", "Unknown"]}
               onChange={(value) => setFilters((current) => ({ ...current, health: value }))}
             />
           </div>
@@ -1299,7 +1301,7 @@ function HealthByBuList({ data }) {
                 ) : null;
               })}
             </div>
-            <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {HEALTH_STACK_KEYS.map((key) => (
                 <div key={key} className="min-w-0 rounded-lg bg-white px-2 py-2">
                   <p className="truncate text-[10px] font-bold text-slate-500" title={key}>
@@ -2218,7 +2220,7 @@ function buildSmartInsights(dashboard) {
   const { kpis, projects, charts, pmRiskList } = dashboard;
   const criticalProjects = projects.filter((project) => project.priority === "Critical");
   const warningValue = projects
-    .filter((project) => project.health !== "Healthy" || project.dueStatus === "Overdue")
+    .filter((project) => isRiskyProject(project))
     .reduce((sum, project) => sum + (project.value || 0), 0);
   const topRiskBu = [...charts.healthByBu]
     .map((row) => ({
@@ -2231,6 +2233,7 @@ function buildSmartInsights(dashboard) {
   const topCostPm = [...charts.pmPortfolioSummary].sort((a, b) => b.costExposure - a.costExposure)[0];
   const hasDataGaps =
     dashboard.dataQuality.workloadMode !== "live" ||
+    dashboard.dataQuality.healthInputCount < projects.length ||
     dashboard.dataQuality.scheduleInputCount < projects.length ||
     dashboard.dataQuality.costInputCount < projects.length;
 
@@ -2274,12 +2277,15 @@ function buildSmartInsights(dashboard) {
 }
 
 function getDataQualityInsight(dataQuality, totalProjects) {
-  if (dataQuality.workloadMode !== "live") return getWorkloadMessage(dataQuality.workloadMode);
   const missing = [];
+  if (dataQuality.healthInputCount < totalProjects) missing.push("health");
   if (dataQuality.scheduleInputCount < totalProjects) missing.push("schedule");
   if (dataQuality.costInputCount < totalProjects) missing.push("cost");
   if (dataQuality.issueInputCount < totalProjects) missing.push("issue");
-  return `Sebagian data ${missing.join(", ")} kosong, jadi insight memakai kolom yang tersedia saja.`;
+  const messages = [];
+  if (dataQuality.workloadMode !== "live") messages.push(getWorkloadMessage(dataQuality.workloadMode));
+  if (missing.length) messages.push(`Sebagian data ${missing.join(", ")} kosong, jadi insight memakai kolom yang tersedia saja.`);
+  return messages.join(" ");
 }
 
 function getAiInsightsEndpoint() {
@@ -2308,6 +2314,7 @@ function buildAiBriefPayload(dashboard, sourceName) {
         healthy: row.Healthy || 0,
         warning: row.Warning || 0,
         needImprovement: row["Need Improvement"] || 0,
+        unknown: row.Unknown || 0,
       }))
       .sort((a, b) => b.warning + b.needImprovement - (a.warning + a.needImprovement))
       .slice(0, 8),
@@ -2343,6 +2350,14 @@ function buildAiBriefPayload(dashboard, sourceName) {
         valueAtRisk: pm.valueAtRisk,
       })),
   };
+}
+
+function isHealthRisk(health) {
+  return health === "Warning" || health === "Need Improvement";
+}
+
+function isRiskyProject(project) {
+  return isHealthRisk(project.health) || project.dueStatus === "Overdue";
 }
 
 const linePalette = ["#0f172a", "#2563eb", "#64748b", "#f59e0b", "#ef4444", "#16a34a", "#7c3aed"];

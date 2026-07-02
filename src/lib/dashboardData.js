@@ -461,6 +461,7 @@ export function buildDashboard(projects, rules = defaultRules) {
       workload,
       workloadSource: shouldUseProxy ? "proxy" : "live",
       hasScheduleInput: project.hasScheduleInput ?? hasCellValue(project.schedule),
+      hasHealthInput: project.hasHealthInput ?? hasCellValue(project.health),
       hasCostInput:
         project.hasCostInput ??
         (project.costAmount !== undefined && project.costAmount !== null && project.costAmount > 0),
@@ -474,9 +475,7 @@ export function buildDashboard(projects, rules = defaultRules) {
   });
   const dashboardMonths = getDashboardMonths(enriched);
 
-  const totalValueAtRisk = enriched
-    .filter((item) => item.health !== "Healthy" || item.dueStatus === "Overdue")
-    .reduce((sum, item) => sum + item.value, 0);
+  const totalValueAtRisk = enriched.filter(isRiskyProject).reduce((sum, item) => sum + item.value, 0);
 
   const pmMonthWorkloads = getPmMonthWorkloads(enriched);
   const overloadedPmNames = pmMonthWorkloads
@@ -488,6 +487,7 @@ export function buildDashboard(projects, rules = defaultRules) {
     dataQuality: {
       workloadMode,
       hasWorkloadInput: workloadMode === "live" || workloadMode === "mixed",
+      healthInputCount: enriched.filter((item) => item.hasHealthInput).length,
       scheduleInputCount: enriched.filter((item) => item.hasScheduleInput).length,
       issueInputCount: enriched.filter((item) => item.hasIssueInput).length,
       costInputCount: enriched.filter((item) => item.hasCostInput).length,
@@ -498,6 +498,7 @@ export function buildDashboard(projects, rules = defaultRules) {
       healthy: enriched.filter((item) => item.health === "Healthy").length,
       warning: enriched.filter((item) => item.health === "Warning").length,
       needImprovement: enriched.filter((item) => item.health === "Need Improvement").length,
+      unknownHealth: enriched.filter((item) => item.health === "Unknown").length,
       overdue: enriched.filter((item) => item.dueStatus === "Overdue").length,
       openIssueProjects: enriched.filter((item) => item.openIssue > 0).length,
       overloadedPms: overloadedPmNames.length,
@@ -520,7 +521,7 @@ export function buildDashboard(projects, rules = defaultRules) {
     },
     priorityProjects: [...enriched].sort(prioritySort).slice(0, 6),
     troubledHighValueProjects: [...enriched]
-      .filter((item) => item.health !== "Healthy" || item.dueStatus === "Overdue" || item.openIssue > 0)
+      .filter((item) => isRiskyProject(item) || item.openIssue > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 6),
     overloadedPmNames,
@@ -586,6 +587,7 @@ function normalizeProject(row, index) {
     value: projectValue,
     costAmount,
     monthlyCost,
+    hasHealthInput: hasCellValue(getField(row, "health")),
     hasCostInput,
     hasScheduleInput: hasCellValue(rawSchedule),
     hasIssueInput: hasCellValue(rawOpenIssue) || hasIssueText(rawIssueType),
@@ -641,7 +643,7 @@ function mergeProject(current, incoming) {
     sourceFile: mergeSourceFiles(current.sourceFile, incoming.sourceFile),
     startDate: earliestDate(current.startDate, incoming.startDate),
     endDate: latestDate(current.endDate, incoming.endDate),
-    health: pickBySeverity(current.health, incoming.health, { Healthy: 0, Warning: 1, "Need Improvement": 2 }),
+    health: pickBySeverity(current.health, incoming.health, { Unknown: -1, Healthy: 0, Warning: 1, "Need Improvement": 2 }),
     dueStatus: pickBySeverity(current.dueStatus, incoming.dueStatus, { "On Track": 0, "At Risk": 1, Overdue: 2 }),
     schedule: pickBySeverity(current.schedule, incoming.schedule, { Leading: 0, "On Time": 1, "Potential Delay": 2, Delay: 3 }),
     resource: pickCondition(current.resource, incoming.resource),
@@ -652,6 +654,7 @@ function mergeProject(current, incoming) {
     costAmount: Math.max(current.costAmount || 0, incoming.costAmount || 0),
     monthlyCost,
     hasCostInput: current.hasCostInput || incoming.hasCostInput,
+    hasHealthInput: current.hasHealthInput || incoming.hasHealthInput,
     hasScheduleInput: current.hasScheduleInput || incoming.hasScheduleInput,
     hasIssueInput: current.hasIssueInput || incoming.hasIssueInput,
     hasWorkloadInput: current.hasWorkloadInput || incoming.hasWorkloadInput,
@@ -842,6 +845,7 @@ function compactKey(value) {
 }
 
 function normalizeHealth(value) {
+  if (!hasCellValue(value)) return "Unknown";
   const normalized = compactKey(value);
   const score = parsePlainNumber(value);
   if (String(value ?? "").trim().match(/^[1-3]$/)) {
@@ -855,7 +859,16 @@ function normalizeHealth(value) {
   if (normalized.includes("warn") || normalized.includes("risk") || normalized.includes("yellow")) {
     return "Warning";
   }
-  return "Healthy";
+  if (
+    normalized.includes("healthy") ||
+    normalized.includes("green") ||
+    normalized.includes("good") ||
+    normalized.includes("normal") ||
+    normalized.includes("ok")
+  ) {
+    return "Healthy";
+  }
+  return "Unknown";
 }
 
 function normalizeDueStatus(value) {
@@ -1056,7 +1069,7 @@ function getCurrentWorkload(project) {
 }
 
 function getPriority(project, workload, rules) {
-  const isTroubledHealth = project.health === "Warning" || project.health === "Need Improvement";
+  const isTroubledHealth = isHealthRisk(project.health);
   const isCritical =
     isTroubledHealth &&
     project.dueStatus === "Overdue" &&
@@ -1173,7 +1186,7 @@ function getPmPortfolioSummary(items) {
     row.projects += 1;
     row.portfolioValue += item.value || 0;
     row.costExposure += item.hasCostInput ? item.costAmount || 0 : 0;
-    if (item.health !== "Healthy" || item.dueStatus === "Overdue") row.valueAtRisk += item.value || 0;
+    if (isRiskyProject(item)) row.valueAtRisk += item.value || 0;
     map.set(item.pm, row);
   });
   return Array.from(map.values()).sort((a, b) => b.costExposure - a.costExposure);
@@ -1210,13 +1223,21 @@ function getPmRiskList(items) {
   items.forEach((item) => {
     const row = map.get(item.pm) || { pm: item.pm, riskyProjects: 0, overdueProjects: 0, projects: 0 };
     row.projects += 1;
-    if (item.health !== "Healthy" || item.dueStatus === "Overdue") row.riskyProjects += 1;
+    if (isRiskyProject(item)) row.riskyProjects += 1;
     if (item.dueStatus === "Overdue") row.overdueProjects += 1;
     map.set(item.pm, row);
   });
   return Array.from(map.values())
     .filter((item) => item.riskyProjects > 0)
     .sort((a, b) => b.riskyProjects - a.riskyProjects || b.overdueProjects - a.overdueProjects);
+}
+
+function isHealthRisk(health) {
+  return health === "Warning" || health === "Need Improvement";
+}
+
+function isRiskyProject(project) {
+  return isHealthRisk(project.health) || project.dueStatus === "Overdue";
 }
 
 function prioritySort(a, b) {
