@@ -2,6 +2,8 @@ const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 const MAX_SNAPSHOT_BYTES = 70000;
 const MAX_QUESTION_CHARS = 1200;
 const MAX_HISTORY_ITEMS = 10;
+const MAX_IMAGE_BYTES = 2_500_000;
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const SYSTEM_PROMPT =
   "You are a PMO portfolio analyst chatbot for a React dashboard. Answer in Indonesian. Use only the provided dashboard snapshot and conversation history. If the data is missing, say what is missing instead of guessing. Be concise, practical, and explicit about proxy metrics such as active-project workload.";
 
@@ -51,6 +53,12 @@ export async function handler(event) {
   }
 
   const history = sanitizeHistory(payload.history);
+  let image = null;
+  try {
+    image = sanitizeImage(payload.image);
+  } catch (error) {
+    return jsonResponse(error.statusCode || 400, { error: error.message || "Invalid image." }, headers);
+  }
   const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 
   try {
@@ -64,7 +72,7 @@ export async function handler(event) {
         model,
         store: false,
         system_instruction: SYSTEM_PROMPT,
-        input: buildChatPrompt(snapshotText, history, question),
+        input: buildChatInput(snapshotText, history, question, image),
         generation_config: {
           temperature: 0.25,
           thinking_level: "low",
@@ -99,12 +107,12 @@ export async function handler(event) {
   }
 }
 
-function buildChatPrompt(snapshotText, history, question) {
+function buildChatInput(snapshotText, history, question, image) {
   const conversation = history.length
     ? history.map((item) => `${item.role === "assistant" ? "Assistant" : "User"}: ${item.content}`).join("\n")
     : "No prior conversation.";
 
-  return [
+  const prompt = [
     "Dashboard snapshot:",
     snapshotText,
     "",
@@ -112,9 +120,22 @@ function buildChatPrompt(snapshotText, history, question) {
     conversation,
     "",
     `User question: ${question}`,
+    image ? `Attached image: ${image.name || "image"} (${image.mime_type}). Use it together with the dashboard snapshot.` : "",
     "",
-    "Answer rules: Indonesian only. Keep the answer under 8 short bullet points or 2 short paragraphs. Mention exact numbers when available. Do not invent project details outside the snapshot.",
-  ].join("\n");
+    "Answer rules: Indonesian only. Keep the answer under 8 short bullet points or 2 short paragraphs. Mention exact numbers when available. Do not invent project details outside the snapshot. Prefer clean plain Markdown bullets and bold labels when useful.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const input = [{ type: "text", text: prompt }];
+  if (image) {
+    input.push({
+      type: "image",
+      data: image.data,
+      mime_type: image.mime_type,
+    });
+  }
+  return input;
 }
 
 function sanitizeSnapshot(snapshot) {
@@ -149,6 +170,39 @@ function sanitizeHistory(history) {
       content: String(item.content || "").slice(0, 1000),
     }))
     .filter((item) => item.content.trim());
+}
+
+function sanitizeImage(image) {
+  if (!image || typeof image !== "object") return null;
+  const mimeType = String(image.mimeType || image.mime_type || "").toLowerCase();
+  const data = String(image.data || "").replace(/^data:[^;]+;base64,/, "");
+  if (!mimeType || !data) return null;
+  if (!ALLOWED_IMAGE_TYPES.has(mimeType)) {
+    const error = new Error("Unsupported image type. Use JPG, PNG, WEBP, or GIF.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let byteLength = 0;
+  try {
+    byteLength = Buffer.byteLength(data, "base64");
+  } catch {
+    const error = new Error("Invalid image data.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (byteLength > MAX_IMAGE_BYTES) {
+    const error = new Error("Image is too large. Use an image under 2.5 MB.");
+    error.statusCode = 413;
+    throw error;
+  }
+
+  return {
+    name: String(image.name || "image").slice(0, 120),
+    mime_type: mimeType,
+    data,
+  };
 }
 
 function limitRows(rows, limit) {

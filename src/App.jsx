@@ -11,6 +11,7 @@ import {
   Download,
   FileSpreadsheet,
   Filter,
+  ImagePlus,
   LineChart as LineChartIcon,
   MessageCircle,
   Search,
@@ -79,6 +80,8 @@ const PRIORITY_STYLES = {
   Medium: "bg-blue-50 text-blue-700 border-blue-100",
   Normal: "bg-slate-100 text-slate-600 border-slate-200",
 };
+
+const MAX_CHAT_IMAGE_BYTES = 2_500_000;
 
 const tabs = [
   {
@@ -675,14 +678,17 @@ function DashboardChatbot({ dashboard, sourceName }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState(() => [createChatWelcomeMessage(dashboard)]);
   const [draft, setDraft] = useState("");
+  const [imageDraft, setImageDraft] = useState(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const chatEndpoint = getChatbotEndpoint();
   const messagesEndRef = useRef(null);
+  const imageInputRef = useRef(null);
 
   useEffect(() => {
     setMessages([createChatWelcomeMessage(dashboard)]);
     setDraft("");
+    setImageDraft(null);
     setStatus("idle");
     setError("");
   }, [dashboard.kpis.totalProjects, sourceName]);
@@ -694,18 +700,20 @@ function DashboardChatbot({ dashboard, sourceName }) {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const question = draft.trim();
-    if (!question || status === "loading") return;
+    const question = draft.trim() || (imageDraft ? "Analisis gambar ini dan hubungkan dengan data dashboard." : "");
+    if ((!question && !imageDraft) || status === "loading") return;
 
     if (!chatEndpoint) {
       setError("Chat Gemini belum aktif di deployment ini.");
       return;
     }
 
-    const userMessage = createChatMessage("user", question);
+    const userMessage = createChatMessage("user", question, imageDraft ? toMessageImage(imageDraft) : null);
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
     setDraft("");
+    setImageDraft(null);
+    if (imageInputRef.current) imageInputRef.current.value = "";
     setStatus("loading");
     setError("");
 
@@ -718,8 +726,18 @@ function DashboardChatbot({ dashboard, sourceName }) {
           history: nextMessages
             .filter((message) => message.role === "user" || message.role === "assistant")
             .slice(-8)
-            .map(({ role, content }) => ({ role, content })),
+            .map(({ role, content, image }) => ({
+              role,
+              content: image ? `${content}\n[Gambar terlampir: ${image.name}]` : content,
+            })),
           snapshot: buildChatPayload(dashboard, sourceName),
+          image: imageDraft
+            ? {
+                name: imageDraft.name,
+                mimeType: imageDraft.mimeType,
+                data: imageDraft.data,
+              }
+            : null,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -730,6 +748,45 @@ function DashboardChatbot({ dashboard, sourceName }) {
       setError(err.message || "Gagal menghubungi Gemini.");
       setStatus("error");
     }
+  }
+
+  function handleImageChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("File harus berupa gambar.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > MAX_CHAT_IMAGE_BYTES) {
+      setError("Ukuran gambar maksimal 2.5 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      const data = dataUrl.split(",")[1] || "";
+      setImageDraft({
+        name: file.name,
+        mimeType: file.type,
+        size: file.size,
+        previewUrl: dataUrl,
+        data,
+      });
+      setError("");
+    };
+    reader.onerror = () => {
+      setError("Gagal membaca gambar.");
+      event.target.value = "";
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearImageDraft() {
+    setImageDraft(null);
+    if (imageInputRef.current) imageInputRef.current.value = "";
   }
 
   return (
@@ -792,7 +849,40 @@ function DashboardChatbot({ dashboard, sourceName }) {
           ) : null}
 
           <form onSubmit={handleSubmit} className="border-t border-slate-200 bg-white p-3">
+            {imageDraft ? (
+              <div className="mb-2 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
+                <img src={imageDraft.previewUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-bold text-slate-800">{imageDraft.name}</p>
+                  <p className="mt-0.5 text-[11px] font-semibold text-slate-500">{formatBytes(imageDraft.size)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearImageDraft}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
+                  aria-label="Remove attached image"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
             <div className="flex items-end gap-2">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="sr-only"
+                onChange={handleImageChange}
+              />
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50"
+                aria-label="Attach image"
+                disabled={status === "loading"}
+              >
+                <ImagePlus size={17} />
+              </button>
               <textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -811,7 +901,7 @@ function DashboardChatbot({ dashboard, sourceName }) {
               />
               <button
                 type="submit"
-                disabled={!draft.trim() || status === "loading"}
+                disabled={(!draft.trim() && !imageDraft) || status === "loading"}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Send chat message"
               >
@@ -836,13 +926,16 @@ function ChatBubble({ message }) {
         </div>
       ) : null}
       <div
-        className={`max-w-[82%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm leading-6 shadow-sm ${
+        className={`max-w-[82%] break-words rounded-2xl px-3 py-2 text-sm leading-6 shadow-sm ${
           isUser
             ? "rounded-tr-sm bg-slate-950 text-white"
             : "rounded-tl-sm border border-slate-100 bg-white text-slate-700"
         }`}
       >
-        {message.content}
+        {message.image ? (
+          <img src={message.image.previewUrl} alt={message.image.name} className="mb-2 max-h-48 w-full rounded-xl object-cover" />
+        ) : null}
+        <FormattedChatContent text={message.content} />
       </div>
       {isUser ? (
         <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm">
@@ -853,6 +946,108 @@ function ChatBubble({ message }) {
   );
 }
 
+function FormattedChatContent({ text }) {
+  const blocks = parseChatBlocks(text);
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, index) => {
+        if (block.type === "list") {
+          return (
+            <ul key={`list-${index}`} className="list-disc space-y-1 pl-4">
+              {block.items.map((item, itemIndex) => (
+                <li key={`${item}-${itemIndex}`} className="pl-1">
+                  {renderInlineMarkdown(item)}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.type === "ordered") {
+          return (
+            <ol key={`ordered-${index}`} className="list-decimal space-y-1 pl-4">
+              {block.items.map((item, itemIndex) => (
+                <li key={`${item}-${itemIndex}`} className="pl-1">
+                  {renderInlineMarkdown(item)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+        return (
+          <p key={`paragraph-${index}`} className="leading-6">
+            {renderInlineMarkdown(block.text)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function parseChatBlocks(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  let currentList = null;
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      currentList = null;
+      return;
+    }
+
+    const unordered = line.match(/^[-*]\s+(.+)/);
+    if (unordered) {
+      if (!currentList || currentList.type !== "list") {
+        currentList = { type: "list", items: [] };
+        blocks.push(currentList);
+      }
+      currentList.items.push(unordered[1]);
+      return;
+    }
+
+    const ordered = line.match(/^\d+[.)]\s+(.+)/);
+    if (ordered) {
+      if (!currentList || currentList.type !== "ordered") {
+        currentList = { type: "ordered", items: [] };
+        blocks.push(currentList);
+      }
+      currentList.items.push(ordered[1]);
+      return;
+    }
+
+    currentList = null;
+    blocks.push({ type: "paragraph", text: line });
+  });
+
+  return blocks.length ? blocks : [{ type: "paragraph", text: "" }];
+}
+
+function renderInlineMarkdown(text) {
+  const parts = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  let lastIndex = 0;
+  String(text || "").replace(regex, (match, _token, offset) => {
+    if (offset > lastIndex) parts.push(String(text).slice(lastIndex, offset));
+    const isBold = match.startsWith("**");
+    const content = isBold ? match.slice(2, -2) : match.slice(1, -1);
+    parts.push(
+      isBold ? (
+        <strong key={`${match}-${offset}`} className="font-bold">
+          {content}
+        </strong>
+      ) : (
+        <em key={`${match}-${offset}`} className="italic">
+          {content}
+        </em>
+      ),
+    );
+    lastIndex = offset + match.length;
+    return match;
+  });
+  if (lastIndex < String(text).length) parts.push(String(text).slice(lastIndex));
+  return parts.length ? parts : text;
+}
+
 function createChatWelcomeMessage(dashboard) {
   const { kpis } = dashboard;
   return createChatMessage(
@@ -861,12 +1056,26 @@ function createChatWelcomeMessage(dashboard) {
   );
 }
 
-function createChatMessage(role, content) {
+function createChatMessage(role, content, image = null) {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     content,
+    image,
   };
+}
+
+function toMessageImage(image) {
+  return {
+    name: image.name,
+    previewUrl: image.previewUrl,
+  };
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return "0 KB";
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1000))} KB`;
 }
 
 function AiBriefCard({ brief }) {

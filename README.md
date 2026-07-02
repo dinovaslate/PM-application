@@ -19,7 +19,7 @@ Import repo ini di Vercel. Konfigurasi build sudah ada di `vercel.json`.
 
 ## AI Brief dan PMO Chat Gratis dengan Gemini
 
-Fitur AI Brief dan chatbot PMO tidak memakai OpenAI secara default. Untuk opsi gratis, buat API key dari Google AI Studio, lalu set environment variable di Vercel:
+Fitur AI Brief dan chatbot PMO tidak memakai OpenAI secara default. Chatbot juga mendukung satu gambar kecil per pesan untuk dianalisis bersama snapshot dashboard. Untuk opsi gratis, buat API key dari Google AI Studio, lalu set environment variable di Vercel:
 
 ```text
 GEMINI_API_KEY=your_google_ai_studio_key
