@@ -22,7 +22,7 @@ const FIELD_ALIASES = {
   startDate: ["startdate", "projectstart", "mulai", "tanggalmulai", "start"],
   endDate: ["enddate", "finishdate", "duedate", "targetdate", "tanggalakhir", "deadline"],
   health: ["overallhealthcat", "projecthealthcat", "healthcat", "overallhealth", "health", "projecthealth", "statushealth", "kesehatanproyek"],
-  dueStatus: ["duestatus", "due", "deadline", "statusdue", "overdue"],
+  dueStatus: ["duestatus", "statusdue", "deadlinestatus", "duedatestatus", "overduestatus", "overdue"],
   schedule: ["spi", "schedulecat", "scheduleperformancecat", "scheduleperformance", "statusschedule", "schedulestatus", "jadwal", "schedule"],
   resource: [
     "mandaysinfo",
@@ -34,7 +34,7 @@ const FIELD_ALIASES = {
     "kondisiresource",
     "resource",
   ],
-  cost: ["budgetstatus", "costcat", "costcondition", "statuscost", "budgetcondition", "kondisicost", "kondisibiaya", "costscore"],
+  cost: ["budgetstatus", "costcat", "costcondition", "statuscost", "budgetcondition", "kondisicost", "kondisibiaya", "costscore", "cost"],
   costAmount: [
     "totalcostactualperiwo",
     "costactualperiwo",
@@ -96,6 +96,19 @@ const COST_PLAN_ALIASES = [
   "budgetamount",
   "budget",
 ];
+
+const SAFE_COST_AMOUNT_ALIASES = [
+  "actualcostamount",
+  "plannedcostamount",
+  "costamount",
+  "projectcost",
+  "budgetamount",
+  "estimatedcost",
+  "nilaicost",
+  "nilaibiaya",
+];
+
+const GENERIC_COST_AMOUNT_ALIASES = ["cost", "budget", "biaya"];
 
 const DASHBOARD_YEAR = new Date().getFullYear();
 
@@ -758,7 +771,12 @@ function getPrioritizedNumericField(normalizedMap, aliases) {
 function getCostAmount(row) {
   const aggregateActual = getNumericFieldByAliases(row, AGGREGATE_COST_ACTUAL_ALIASES);
   if (aggregateActual > 0) return aggregateActual;
-  return sumNumericFieldsByAliases(row, DETAIL_COST_ACTUAL_ALIASES);
+  const detailActual = sumNumericFieldsByAliases(row, DETAIL_COST_ACTUAL_ALIASES);
+  if (detailActual > 0) return detailActual;
+  const safeAmount = getNumericFieldByAliases(row, SAFE_COST_AMOUNT_ALIASES);
+  if (safeAmount > 0) return safeAmount;
+  const genericAmount = getNumericFieldByAliases(row, GENERIC_COST_AMOUNT_ALIASES);
+  return genericAmount >= 1000 ? genericAmount : 0;
 }
 
 function hasCostFields(row) {
@@ -766,6 +784,8 @@ function hasCostFields(row) {
     ...AGGREGATE_COST_ACTUAL_ALIASES,
     ...DETAIL_COST_ACTUAL_ALIASES,
     ...COST_PLAN_ALIASES,
+    ...SAFE_COST_AMOUNT_ALIASES,
+    ...GENERIC_COST_AMOUNT_ALIASES,
   ]);
 }
 
@@ -943,6 +963,7 @@ function normalizeCostCondition(value) {
     if (score === 3) return "On Budget";
     return "Surplus";
   }
+  if (score > 4 && text.replace(/[^\d,.-]/g, "")) return "On Budget";
   if (!text) return "On Budget";
   return text;
 }
