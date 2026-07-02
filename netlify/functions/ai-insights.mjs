@@ -22,7 +22,7 @@ export async function handler(event) {
       501,
       {
         error: "OPENAI_API_KEY is not configured.",
-        setup: "Set OPENAI_API_KEY in Netlify environment variables to enable AI Brief.",
+        setup: "Set OPENAI_API_KEY in Vercel or Netlify environment variables to enable AI Brief.",
       },
       headers,
     );

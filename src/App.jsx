@@ -631,7 +631,7 @@ function SmartInsights({ dashboard, sourceName }) {
         <div className="min-w-0">
           <p className="text-xs font-bold text-slate-800">{aiBrief ? "AI Brief aktif" : "Insight lokal aktif"}</p>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            {aiEndpoint ? "Klik generate untuk ringkasan LLM dari snapshot dashboard." : "Deploy ke Netlify dan set OPENAI_API_KEY untuk mengaktifkan AI Brief."}
+            {aiEndpoint ? "Klik generate untuk ringkasan LLM dari snapshot dashboard." : "Deploy ke Vercel/Netlify dan set OPENAI_API_KEY untuk mengaktifkan AI Brief."}
           </p>
         </div>
         <button
@@ -2287,9 +2287,10 @@ function getAiInsightsEndpoint() {
   if (configured) return configured;
   if (typeof window === "undefined") return "";
   const host = window.location.hostname;
+  if (host.endsWith(".vercel.app")) return "/api/ai-insights";
   if (host.endsWith(".netlify.app")) return "/.netlify/functions/ai-insights";
   if (import.meta.env.PROD && host !== "localhost" && host !== "127.0.0.1" && !host.includes("github.io")) {
-    return "/.netlify/functions/ai-insights";
+    return "/api/ai-insights";
   }
   return "";
 }
