@@ -1,5 +1,8 @@
-const DEFAULT_MODEL = "gpt-5.4-mini";
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
 const MAX_SNAPSHOT_BYTES = 18000;
+const SYSTEM_PROMPT =
+  "You are a PMO portfolio analyst. Return valid compact JSON only with keys: summary, actions, questions. Keep it practical, concise, and based only on the provided dashboard snapshot.";
 
 export async function handler(event) {
   const origin = event.headers?.origin || event.headers?.Origin || "";
@@ -17,17 +20,6 @@ export async function handler(event) {
     return jsonResponse(403, { error: "Origin is not allowed for this AI proxy." }, headers);
   }
 
-  if (!process.env.OPENAI_API_KEY) {
-    return jsonResponse(
-      501,
-      {
-        error: "OPENAI_API_KEY is not configured.",
-        setup: "Set OPENAI_API_KEY in Vercel or Netlify environment variables to enable AI Brief.",
-      },
-      headers,
-    );
-  }
-
   let payload;
   try {
     payload = JSON.parse(event.body || "{}");
@@ -41,7 +33,76 @@ export async function handler(event) {
     return jsonResponse(413, { error: "Dashboard snapshot is too large." }, headers);
   }
 
-  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  if (process.env.GEMINI_API_KEY) {
+    return generateGeminiBrief(snapshotText, headers);
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    return generateOpenAiBrief(snapshotText, headers);
+  }
+
+  return jsonResponse(
+    501,
+    {
+      error: "No AI provider is configured.",
+      setup: "Set GEMINI_API_KEY in Vercel or Netlify environment variables to enable the free Gemini AI Brief. OPENAI_API_KEY is still supported as a fallback.",
+    },
+    headers,
+  );
+}
+
+async function generateGeminiBrief(snapshotText, headers) {
+  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+
+  try {
+    const upstream = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": process.env.GEMINI_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        store: false,
+        system_instruction: SYSTEM_PROMPT,
+        input: buildBriefPrompt(snapshotText),
+        generation_config: {
+          temperature: 0.2,
+          thinking_level: "low",
+        },
+      }),
+    });
+
+    const upstreamBody = await upstream.json().catch(() => ({}));
+
+    if (!upstream.ok) {
+      return jsonResponse(
+        upstream.status,
+        {
+          error: upstreamBody.error?.message || "Gemini request failed.",
+        },
+        headers,
+      );
+    }
+
+    const outputText = extractOutputText(upstreamBody);
+    const brief = parseBrief(outputText);
+    return jsonResponse(
+      200,
+      {
+        provider: "gemini",
+        model,
+        brief,
+      },
+      headers,
+    );
+  } catch (error) {
+    return jsonResponse(502, { error: error.message || "Gemini proxy failed." }, headers);
+  }
+}
+
+async function generateOpenAiBrief(snapshotText, headers) {
+  const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
 
   try {
     const upstream = await fetch("https://api.openai.com/v1/responses", {
@@ -56,12 +117,11 @@ export async function handler(event) {
         input: [
           {
             role: "system",
-            content:
-              "You are a PMO portfolio analyst. Return valid compact JSON only with keys: summary, actions, questions. Keep it practical, concise, and based only on the provided dashboard snapshot.",
+            content: SYSTEM_PROMPT,
           },
           {
             role: "user",
-            content: `Analyze this PMO dashboard snapshot and produce an Indonesian executive action brief. JSON schema: {"summary":"string","actions":[{"priority":"Critical|High|Medium","title":"string","detail":"string"}],"questions":["string"]}. Snapshot: ${snapshotText}`,
+            content: buildBriefPrompt(snapshotText),
           },
         ],
       }),
@@ -93,6 +153,10 @@ export async function handler(event) {
   } catch (error) {
     return jsonResponse(502, { error: error.message || "AI proxy failed." }, headers);
   }
+}
+
+function buildBriefPrompt(snapshotText) {
+  return `Analyze this PMO dashboard snapshot and produce an Indonesian executive action brief. JSON schema: {"summary":"string","actions":[{"priority":"Critical|High|Medium","title":"string","detail":"string"}],"questions":["string"]}. Snapshot: ${snapshotText}`;
 }
 
 function sanitizeSnapshot(snapshot) {

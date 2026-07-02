@@ -631,7 +631,7 @@ function SmartInsights({ dashboard, sourceName }) {
         <div className="min-w-0">
           <p className="text-xs font-bold text-slate-800">{aiBrief ? "AI Brief aktif" : "Insight lokal aktif"}</p>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            {aiEndpoint ? "Klik generate untuk ringkasan LLM dari snapshot dashboard." : "Deploy ke Vercel/Netlify dan set OPENAI_API_KEY untuk mengaktifkan AI Brief."}
+            {aiEndpoint ? "Klik generate untuk ringkasan LLM dari snapshot dashboard." : "Deploy ke Vercel/Netlify dan set GEMINI_API_KEY untuk mengaktifkan AI Brief gratis."}
           </p>
         </div>
         <button
