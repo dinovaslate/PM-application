@@ -332,6 +332,7 @@ export default function App() {
               filteredProjects={filteredProjects}
               isWidgetVisible={isWidgetVisible}
               onOpenCustomize={() => setIsCustomizeOpen(true)}
+              sourceName={sourceName}
             />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
@@ -583,11 +584,73 @@ function NoVisibleWidgets({ onOpenCustomize }) {
   );
 }
 
-function SmartInsights({ dashboard }) {
+function SmartInsights({ dashboard, sourceName }) {
   const insights = useMemo(() => buildSmartInsights(dashboard), [dashboard]);
+  const [aiBrief, setAiBrief] = useState(null);
+  const [aiStatus, setAiStatus] = useState("idle");
+  const [aiError, setAiError] = useState("");
+  const aiEndpoint = getAiInsightsEndpoint();
+
+  useEffect(() => {
+    setAiBrief(null);
+    setAiStatus("idle");
+    setAiError("");
+  }, [dashboard.kpis.totalProjects, sourceName]);
+
+  async function handleGenerateAiBrief() {
+    if (!aiEndpoint) {
+      setAiError("AI proxy belum aktif di deployment ini.");
+      setAiStatus("error");
+      return;
+    }
+
+    setAiStatus("loading");
+    setAiError("");
+
+    try {
+      const response = await fetch(aiEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          snapshot: buildAiBriefPayload(dashboard, sourceName),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Gagal generate AI brief.");
+      setAiBrief(data.brief);
+      setAiStatus("ready");
+    } catch (error) {
+      setAiError(error.message || "Gagal generate AI brief.");
+      setAiStatus("error");
+    }
+  }
 
   return (
     <Panel title="Smart Insights" action="Local">
+      <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-slate-800">{aiBrief ? "AI Brief aktif" : "Insight lokal aktif"}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            {aiEndpoint ? "Klik generate untuk ringkasan LLM dari snapshot dashboard." : "Deploy ke Netlify dan set OPENAI_API_KEY untuk mengaktifkan AI Brief."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleGenerateAiBrief}
+          disabled={aiStatus === "loading" || !aiEndpoint}
+          className="inline-flex h-9 shrink-0 items-center justify-center rounded-md bg-slate-950 px-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {!aiEndpoint ? "AI Proxy Off" : aiStatus === "loading" ? "Generating..." : "Generate AI Brief"}
+        </button>
+      </div>
+
+      {aiBrief ? <AiBriefCard brief={aiBrief} /> : null}
+      {aiError ? (
+        <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+          {aiError}
+        </div>
+      ) : null}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {insights.map((insight) => (
           <div key={insight.title} className={`rounded-xl border px-4 py-3 ${insight.tone}`}>
@@ -601,7 +664,40 @@ function SmartInsights({ dashboard }) {
   );
 }
 
-function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize }) {
+function AiBriefCard({ brief }) {
+  return (
+    <div className="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-bold text-slate-950">AI Brief</p>
+        <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold uppercase text-blue-700">LLM</span>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-slate-700">{brief.summary}</p>
+      {brief.actions?.length ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {brief.actions.map((action, index) => (
+            <div key={`${action.title}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.05em] text-slate-500">{action.priority}</p>
+              <p className="mt-1 text-sm font-bold text-slate-950">{action.title}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{action.detail}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {brief.questions?.length ? (
+        <div className="mt-3 rounded-lg border border-slate-100 px-3 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.05em] text-slate-500">Questions</p>
+          <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-600">
+            {brief.questions.map((question, index) => (
+              <li key={`${question}-${index}`}>{question}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize, sourceName }) {
   const { kpis, charts, priorityProjects } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -632,7 +728,7 @@ function ExecutiveOverview({ dashboard, isWidgetVisible, onOpenCustomize }) {
         </div>
       ) : null}
 
-      {showInsights ? <SmartInsights dashboard={dashboard} /> : null}
+      {showInsights ? <SmartInsights dashboard={dashboard} sourceName={sourceName} /> : null}
 
       {showHealthByBu || showWorkloadTrend ? (
         <div className={`grid gap-5 ${showHealthByBu && showWorkloadTrend ? "lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]" : ""}`}>
@@ -2184,6 +2280,68 @@ function getDataQualityInsight(dataQuality, totalProjects) {
   if (dataQuality.costInputCount < totalProjects) missing.push("cost");
   if (dataQuality.issueInputCount < totalProjects) missing.push("issue");
   return `Sebagian data ${missing.join(", ")} kosong, jadi insight memakai kolom yang tersedia saja.`;
+}
+
+function getAiInsightsEndpoint() {
+  const configured = import.meta.env.VITE_AI_INSIGHTS_ENDPOINT;
+  if (configured) return configured;
+  if (typeof window === "undefined") return "";
+  const host = window.location.hostname;
+  if (host.endsWith(".netlify.app")) return "/.netlify/functions/ai-insights";
+  if (import.meta.env.PROD && host !== "localhost" && host !== "127.0.0.1" && !host.includes("github.io")) {
+    return "/.netlify/functions/ai-insights";
+  }
+  return "";
+}
+
+function buildAiBriefPayload(dashboard, sourceName) {
+  const { kpis, charts, priorityProjects, pmRiskList } = dashboard;
+  return {
+    generatedAt: new Date().toISOString(),
+    source: sourceName,
+    kpis,
+    dataQuality: dashboard.dataQuality,
+    healthByBu: charts.healthByBu
+      .map((row) => ({
+        bu: row.name,
+        healthy: row.Healthy || 0,
+        warning: row.Warning || 0,
+        needImprovement: row["Need Improvement"] || 0,
+      }))
+      .sort((a, b) => b.warning + b.needImprovement - (a.warning + a.needImprovement))
+      .slice(0, 8),
+    scheduleDistribution: charts.scheduleDistribution,
+    topPriorityProjects: priorityProjects.slice(0, 8).map((project) => ({
+      priority: project.priority,
+      iwo: project.iwo,
+      project: project.project,
+      customer: project.customer,
+      pm: project.pm,
+      bu: project.bu,
+      health: project.health,
+      dueStatus: project.dueStatus,
+      schedule: project.schedule,
+      openIssue: project.openIssue,
+      value: project.value,
+      costAmount: project.costAmount,
+      currentWorkload: Number((project.currentWorkload || 0).toFixed(2)),
+    })),
+    topRiskyPms: pmRiskList.slice(0, 8).map((pm) => ({
+      pm: pm.pm,
+      projects: pm.projects,
+      riskyProjects: pm.riskyProjects,
+      overdueProjects: pm.overdueProjects,
+    })),
+    topCostPms: [...charts.pmPortfolioSummary]
+      .sort((a, b) => b.costExposure - a.costExposure)
+      .slice(0, 8)
+      .map((pm) => ({
+        pm: pm.pm,
+        projects: pm.projects,
+        costExposure: pm.costExposure,
+        valueAtRisk: pm.valueAtRisk,
+      })),
+  };
 }
 
 const linePalette = ["#0f172a", "#2563eb", "#64748b", "#f59e0b", "#ef4444", "#16a34a", "#7c3aed"];
