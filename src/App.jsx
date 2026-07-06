@@ -1255,7 +1255,7 @@ function GeneratedChartCanvas({ chart, height = 260, dense = false, showLegend =
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
             <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={dense ? false : { fontSize: 11 }} height={dense ? 8 : 30} />
             <YAxis
-              width={dense ? 42 : 60}
+              width={dense ? 50 : 72}
               tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)}
               tickLine={false}
               axisLine={false}
@@ -1280,7 +1280,7 @@ function GeneratedChartCanvas({ chart, height = 260, dense = false, showLegend =
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
             <XAxis dataKey={xKey} tickLine={false} axisLine={false} tick={dense ? false : { fontSize: 11 }} height={dense ? 8 : 30} />
             <YAxis
-              width={dense ? 42 : 60}
+              width={dense ? 50 : 72}
               tickFormatter={(value) => formatChatChartValue(value, chart.valueFormat, true)}
               tickLine={false}
               axisLine={false}
