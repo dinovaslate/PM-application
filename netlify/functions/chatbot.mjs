@@ -21,6 +21,7 @@ const CHART_SPEC_DATASETS = [
   "workloadByBu",
   "projectCountByPm",
   "pmStatusDistribution",
+  "rawFieldHistogram",
 ];
 const SYSTEM_PROMPT = [
   "You are a senior PMO portfolio analyst chatbot for a React dashboard.",
@@ -156,10 +157,11 @@ function buildChatInput(snapshotText, history, question, image, mode) {
         ].join(" ")
       : mode === "chartSpec"
         ? [
-            'Return valid compact JSON only. Schema: {"answer":"short Indonesian explanation","chartSpec":{"title":"string","description":"string","type":"bar|line","dataset":"string","xKey":"string","series":[{"key":"string","label":"string"}],"valueFormat":"currency|count|number|percent","limit":10,"sort":"desc|asc|none"}}.',
+            'Return valid compact JSON only. Schema: {"answer":"short Indonesian explanation","chartSpec":{"title":"string","sectionTitle":"string","description":"string","type":"bar|line","dataset":"string","field":"string optional for rawFieldHistogram","xKey":"string","series":[{"key":"string","label":"string"}],"valueFormat":"currency|count|number|percent","limit":10,"sort":"desc|asc|none"}}.',
             "Do not return chart.data and do not calculate chart rows. The frontend will calculate rows from the selected dataset whenever Excel changes.",
             `Allowed dataset ids: ${CHART_SPEC_DATASETS.join(", ")}.`,
             "Use metric keys that exist in the chosen dataset from the snapshot. Choose metrics with the same unit when possible.",
+            "For a histogram from a raw Excel header such as CPI, SPI, EV, or AC, use dataset rawFieldHistogram, set field to the exact rawFieldCatalog key, xKey to name, series key to value, valueFormat to count, type to bar, and sort to none.",
             "Prefer line for workloadTrend or costTrend. Prefer bar for category, PM, BU, and project rankings.",
             "If the request cannot be supported, set chartSpec to null and explain what source data is missing in answer.",
             "No markdown fences.",
@@ -225,6 +227,7 @@ function sanitizeSnapshot(snapshot) {
     pmRiskList: limitRows(snapshot.pmRiskList, 120),
     topPriorityProjects: limitRows(snapshot.topPriorityProjects, 25),
     highValueProjects: limitRows(snapshot.highValueProjects, 15),
+    rawFieldCatalog: limitRows(snapshot.rawFieldCatalog, 60),
     availableChartDatasets: limitRows(snapshot.availableChartDatasets, 20),
   };
 }
@@ -408,7 +411,7 @@ function normalizeChartSpec(spec) {
   const dataset = String(spec.dataset || "").trim();
   if (!CHART_SPEC_DATASETS.includes(dataset)) return null;
 
-  const series = Array.isArray(spec.series)
+  let series = Array.isArray(spec.series)
     ? spec.series
         .slice(0, 3)
         .map((item) => ({
@@ -417,15 +420,20 @@ function normalizeChartSpec(spec) {
         }))
         .filter((item) => item.key)
     : [];
+  if (!series.length && dataset === "rawFieldHistogram") {
+    series = [{ key: "value", label: "Rows" }];
+  }
   if (!series.length) return null;
 
   const limit = Number(spec.limit);
   const sort = ["asc", "desc", "none"].includes(spec.sort) ? spec.sort : "desc";
   return {
     title: String(spec.title || "Custom Gemini Graph").slice(0, 120),
+    sectionTitle: String(spec.sectionTitle || spec.section_title || spec.title || "Custom Section").slice(0, 120),
     description: String(spec.description || "").slice(0, 220),
     type: spec.type === "line" ? "line" : "bar",
     dataset,
+    field: String(spec.field || spec.rawField || "").slice(0, 80),
     xKey: String(spec.xKey || "name").slice(0, 40),
     series,
     valueFormat: ["currency", "count", "number", "percent"].includes(spec.valueFormat) ? spec.valueFormat : "number",

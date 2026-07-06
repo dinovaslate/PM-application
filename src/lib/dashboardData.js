@@ -543,6 +543,7 @@ export function buildDashboard(projects, rules = defaultRules) {
 }
 
 function normalizeProject(row, index) {
+  const rawFields = normalizeRawFields(row);
   const workload = {};
   const pmWorkloadRaw = getField(row, "pmWorkload");
   const pmWorkload = parseWorkload(pmWorkloadRaw);
@@ -607,7 +608,17 @@ function normalizeProject(row, index) {
     hasWorkloadInput,
     hasUsableWorkloadInput,
     workload,
+    rawFields,
   };
+}
+
+function normalizeRawFields(row) {
+  return Object.entries(row || {}).reduce((fields, [key, value]) => {
+    const label = String(key || "").trim();
+    if (!label || !hasCellValue(value)) return fields;
+    fields[label] = value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : value;
+    return fields;
+  }, {});
 }
 
 function mergeProjectRecords(projects) {
@@ -673,6 +684,7 @@ function mergeProject(current, incoming) {
     hasWorkloadInput: current.hasWorkloadInput || incoming.hasWorkloadInput,
     hasUsableWorkloadInput: current.hasUsableWorkloadInput || incoming.hasUsableWorkloadInput,
     workload,
+    rawFields: { ...(incoming.rawFields || {}), ...(current.rawFields || {}) },
   };
 }
 

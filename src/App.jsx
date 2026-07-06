@@ -791,6 +791,22 @@ function CustomGraphStudio({
       return;
     }
     if (!request || status === "loading" || disabled) return;
+
+    const localChartSpec = buildLocalCustomChartSpec(request, dashboard);
+    if (localChartSpec) {
+      onAddCustomChart({
+        ...localChartSpec,
+        placement: groupId,
+        prompt: request,
+        answer: "Section dibuat lokal dari header Excel. Data akan dihitung ulang setiap upload.",
+      });
+      setLastAnswer("Section dibuat lokal dari header Excel. Data akan dihitung ulang setiap upload.");
+      setPrompt("");
+      setIsPromptOpen(false);
+      setStatus("ready");
+      return;
+    }
+
     if (!chatEndpoint) {
       setError("Gemini proxy belum aktif di deployment ini.");
       return;
@@ -837,7 +853,7 @@ function CustomGraphStudio({
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.05em] text-slate-500">Custom graph</p>
           <p className="mt-0.5 truncate text-[11px] font-semibold text-slate-500">
-            {disabled ? "Upload Excel dulu" : `Untuk ${groupTitle}`}
+            {disabled ? "Upload Excel dulu" : `Section baru untuk ${groupTitle}`}
           </p>
         </div>
         <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-slate-500">
@@ -863,7 +879,7 @@ function CustomGraphStudio({
                       {chart.title || "Custom graph"}
                     </span>
                     <span className="mt-0.5 block truncate text-[10px] font-semibold uppercase text-slate-400">
-                      {chart.dataset}
+                      {formatCustomDatasetLabel(chart.dataset)}
                     </span>
                   </span>
                 </label>
@@ -894,7 +910,7 @@ function CustomGraphStudio({
                 rows={2}
                 maxLength={360}
                 className="min-h-[52px] w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-5 text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
-                placeholder="Contoh: top PM by cost"
+                placeholder="Contoh: histogram CPI atau top PM by cost"
                 disabled={status === "loading" || disabled}
                 autoFocus
               />
@@ -926,6 +942,52 @@ function CustomGraphStudio({
   );
 }
 
+function buildLocalCustomChartSpec(prompt, dashboard) {
+  const normalizedPrompt = compactChartKey(prompt);
+  const wantsHistogram =
+    normalizedPrompt.includes("histogram") ||
+    normalizedPrompt.includes("distribusi") ||
+    normalizedPrompt.includes("distribution") ||
+    normalizedPrompt.includes("frekuensi") ||
+    normalizedPrompt.includes("frequency");
+  if (!wantsHistogram) return null;
+
+  const field = getRawFieldCatalog(dashboard.projects).find((item) => {
+    const key = compactChartKey(item.key);
+    const label = compactChartKey(item.label);
+    return key && (normalizedPrompt.includes(key) || normalizedPrompt.includes(label));
+  });
+  if (!field) return null;
+
+  return {
+    title: `Histogram ${field.label}`,
+    sectionTitle: `Histogram ${field.label}`,
+    description: `Distribusi ${field.label} dari header Excel mentah (${field.numericCount} nilai numeric).`,
+    type: "bar",
+    dataset: "rawFieldHistogram",
+    field: field.key,
+    xKey: "name",
+    series: [{ key: "value", label: "Rows" }],
+    valueFormat: "count",
+    limit: 8,
+    sort: "none",
+    visible: true,
+  };
+}
+
+function formatCustomDatasetLabel(datasetId) {
+  const labels = {
+    rawFieldHistogram: "Histogram",
+    pmPortfolioSummary: "PM portfolio",
+    topPriorityProjects: "Priority projects",
+    highValueProjects: "High-value projects",
+    issueByType: "Issue type",
+    costTrend: "Cost trend",
+    workloadTrend: "Workload trend",
+  };
+  return labels[datasetId] || String(datasetId || "Dataset");
+}
+
 function CustomChartCard({ chartSpec, dashboard, onRemove, compact = false }) {
   const chart = useMemo(() => materializeCustomChart(chartSpec, dashboard), [chartSpec, dashboard]);
 
@@ -938,7 +1000,7 @@ function CustomChartCard({ chartSpec, dashboard, onRemove, compact = false }) {
           </p>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">
-              {chartSpec.dataset}
+              {formatCustomDatasetLabel(chartSpec.dataset)}
             </span>
             <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase text-emerald-700">
               Local data
@@ -975,19 +1037,61 @@ function CustomDashboardCharts({ tabId, dashboard, customCharts = [], onRemoveCu
   if (!tabCharts.length) return null;
 
   return (
-    <Panel title="Custom Graphs" action={`${tabCharts.length} saved`}>
-      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-        {tabCharts.map((chartSpec) => (
-          <CustomChartCard
-            key={chartSpec.id}
-            chartSpec={chartSpec}
-            dashboard={dashboard}
-            onRemove={() => onRemoveCustomChart(chartSpec.id)}
-          />
-        ))}
+    <div className="space-y-5">
+      {tabCharts.map((chartSpec) => (
+        <CustomChartSection
+          key={chartSpec.id}
+          chartSpec={chartSpec}
+          dashboard={dashboard}
+          onRemove={() => onRemoveCustomChart(chartSpec.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CustomChartSection({ chartSpec, dashboard, onRemove }) {
+  const chart = useMemo(() => materializeCustomChart(chartSpec, dashboard), [chartSpec, dashboard]);
+  const sectionTitle = chartSpec.sectionTitle || chartSpec.title || "Custom Section";
+
+  return (
+    <Panel title={sectionTitle} action="Custom section">
+      <div className="mb-3 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">
+              {formatCustomDatasetLabel(chartSpec.dataset)}
+            </span>
+            {chartSpec.field ? (
+              <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold uppercase text-blue-700">
+                {chartSpec.field}
+              </span>
+            ) : null}
+            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase text-emerald-700">
+              Local data
+            </span>
+          </div>
+          {chartSpec.description ? <p className="mt-2 text-xs leading-5 text-slate-500">{chartSpec.description}</p> : null}
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:bg-slate-50"
+        >
+          <X size={13} />
+          Remove
+        </button>
       </div>
+
+      {chart ? (
+        <GeneratedChartCanvas chart={chart} height={280} />
+      ) : (
+        <div className="flex min-h-[220px] items-center justify-center rounded-lg bg-slate-50 px-3 text-center text-xs leading-5 text-slate-500">
+          Spec section ini belum cocok dengan dataset upload saat ini. Cek field Excel atau generate section baru.
+        </div>
+      )}
       <p className="mt-3 text-xs leading-5 text-slate-500">
-        Graph ini memakai spec tersimpan dari Gemini, lalu dihitung ulang lokal dari Excel aktif.
+        Section ini memakai spec tersimpan, lalu dihitung ulang lokal dari Excel aktif.
       </p>
     </Panel>
   );
@@ -3115,7 +3219,7 @@ function getCustomChartsForTab(customCharts = [], tabId) {
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
-  const dataset = getCustomChartDataset(chartSpec?.dataset, dashboard);
+  const dataset = getCustomChartDataset(chartSpec?.dataset, dashboard, chartSpec);
   if (!dataset) return null;
 
   const series = normalizeCustomChartSeries(chartSpec?.series, dataset);
@@ -3123,7 +3227,7 @@ function materializeCustomChart(chartSpec, dashboard) {
 
   const xKey = dataset.xKey;
   const limit = Number.isFinite(Number(chartSpec.limit)) ? Math.min(Math.max(Number(chartSpec.limit), 3), 12) : dataset.defaultLimit || 10;
-  const sort = chartSpec.sort || dataset.defaultSort || "desc";
+  const sort = dataset.forceSort || chartSpec.sort || dataset.defaultSort || "desc";
   const primaryKey = series[0].key;
   const rows = dataset.rows
     .map((row) => {
@@ -3204,7 +3308,7 @@ function getCustomChartValueFormat(chartSpec, dataset, series) {
   return "number";
 }
 
-function getCustomChartDataset(datasetId, dashboard) {
+function getCustomChartDataset(datasetId, dashboard, chartSpec = {}) {
   const { charts, projects, pmRiskList, troubledHighValueProjects } = dashboard;
   const months = dashboard.months || MONTHS;
   const workloadMode = dashboard.dataQuality?.workloadMode || "live";
@@ -3222,6 +3326,10 @@ function getCustomChartDataset(datasetId, dashboard) {
     valueFormat: "count",
     defaultSort: "desc",
   });
+
+  if (datasetId === "rawFieldHistogram") {
+    return buildRawFieldHistogramDataset(projects, chartSpec);
+  }
 
   const datasets = {
     healthDistribution: distributionConfig("Health Distribution", charts.healthDistribution),
@@ -3347,6 +3455,140 @@ function getCustomChartDataset(datasetId, dashboard) {
   };
 
   return datasets[datasetId] || null;
+}
+
+function buildRawFieldHistogramDataset(projects, chartSpec = {}) {
+  const requestedField = chartSpec.field || chartSpec.rawField || chartSpec.xKey || chartSpec.series?.[0]?.key || chartSpec.series?.[0]?.label;
+  const field = resolveRawFieldLabel(projects, requestedField);
+  if (!field) return null;
+
+  const values = projects
+    .map((project) => parseChartNumber(project.rawFields?.[field]))
+    .filter((value) => Number.isFinite(value));
+  if (!values.length) return null;
+
+  const binCount = Number.isFinite(Number(chartSpec.limit)) ? Math.min(Math.max(Math.round(Number(chartSpec.limit)), 3), 12) : 8;
+  return {
+    label: `Histogram ${field}`,
+    xKey: "name",
+    rows: buildHistogramRows(values, binCount),
+    metrics: {
+      value: { label: "Rows", format: "count", aliases: ["count", "jumlah", "records", "frekuensi"] },
+    },
+    defaultSeries: ["value"],
+    valueFormat: "count",
+    defaultSort: "none",
+    forceSort: "none",
+    defaultLimit: binCount,
+  };
+}
+
+function buildHistogramRows(values, binCount) {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) {
+    return [{ name: formatHistogramBoundary(min), value: values.length }];
+  }
+
+  const step = (max - min) / binCount;
+  const counts = Array.from({ length: binCount }, () => 0);
+  values.forEach((value) => {
+    const index = Math.min(Math.floor((value - min) / step), binCount - 1);
+    counts[index] += 1;
+  });
+
+  return counts.map((value, index) => {
+    const start = min + step * index;
+    const end = index === binCount - 1 ? max : min + step * (index + 1);
+    return {
+      name: `${formatHistogramBoundary(start)}-${formatHistogramBoundary(end)}`,
+      value,
+    };
+  });
+}
+
+function resolveRawFieldLabel(projects, requestedField) {
+  const normalized = compactChartKey(requestedField);
+  if (!normalized) return "";
+
+  const labels = [];
+  projects.forEach((project) => {
+    Object.keys(project.rawFields || {}).forEach((label) => {
+      if (!labels.includes(label)) labels.push(label);
+    });
+  });
+
+  return (
+    labels.find((label) => compactChartKey(label) === normalized) ||
+    labels.find((label) => compactChartKey(label).includes(normalized) || normalized.includes(compactChartKey(label))) ||
+    ""
+  );
+}
+
+function getRawFieldCatalog(projects) {
+  const fields = new Map();
+  projects.forEach((project) => {
+    Object.entries(project.rawFields || {}).forEach(([label, rawValue]) => {
+      const key = compactChartKey(label);
+      if (!key) return;
+      const value = parseChartNumber(rawValue);
+      const current = fields.get(key) || {
+        key: label,
+        label,
+        count: 0,
+        numericCount: 0,
+        min: Number.POSITIVE_INFINITY,
+        max: Number.NEGATIVE_INFINITY,
+      };
+      current.count += 1;
+      if (Number.isFinite(value)) {
+        current.numericCount += 1;
+        current.min = Math.min(current.min, value);
+        current.max = Math.max(current.max, value);
+      }
+      fields.set(key, current);
+    });
+  });
+
+  return Array.from(fields.values())
+    .filter((field) => field.numericCount > 0)
+    .sort((a, b) => b.numericCount - a.numericCount || a.label.localeCompare(b.label))
+    .slice(0, 60)
+    .map((field) => ({
+      key: field.label,
+      label: field.label,
+      numericCount: field.numericCount,
+      count: field.count,
+      min: Number.isFinite(field.min) ? Number(field.min.toFixed(4)) : 0,
+      max: Number.isFinite(field.max) ? Number(field.max.toFixed(4)) : 0,
+    }));
+}
+
+function parseChartNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : Number.NaN;
+  const raw = String(value ?? "").trim();
+  if (!raw) return Number.NaN;
+  let text = raw.replace(/[^\d,.-]/g, "");
+  if (!text || text === "-" || text === "," || text === ".") return Number.NaN;
+  const commaCount = (text.match(/,/g) || []).length;
+  const dotCount = (text.match(/\./g) || []).length;
+  if (commaCount > 0 && dotCount > 0) {
+    text = text.lastIndexOf(",") > text.lastIndexOf(".") ? text.replace(/\./g, "").replace(",", ".") : text.replace(/,/g, "");
+  } else if (commaCount === 1 && dotCount === 0) {
+    text = text.replace(",", ".");
+  } else if (commaCount > 1 && dotCount === 0) {
+    text = text.replace(/,/g, "");
+  } else if (dotCount > 1) {
+    text = text.replace(/\./g, "");
+  }
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function formatHistogramBoundary(value) {
+  const abs = Math.abs(value);
+  const maximumFractionDigits = abs < 10 ? 2 : abs < 1000 ? 1 : 0;
+  return new Intl.NumberFormat("id-ID", { maximumFractionDigits }).format(value);
 }
 
 function compactChartKey(value) {
@@ -3569,12 +3811,13 @@ function buildChartSpecPayload(dashboard, sourceName) {
     workloadByBu: dashboard.charts.workloadByBu,
     projectCountByPm: dashboard.charts.projectCountByPm,
     pmStatusDistribution: dashboard.charts.pmStatusDistribution,
+    rawFieldCatalog: getRawFieldCatalog(dashboard.projects),
     availableChartDatasets: getCustomChartDatasetCatalog(dashboard),
   };
 }
 
 function getCustomChartDatasetCatalog(dashboard) {
-  return [
+  const staticDatasets = [
     "healthDistribution",
     "scheduleDistribution",
     "dueDistribution",
@@ -3608,6 +3851,21 @@ function getCustomChartDatasetCatalog(dashboard) {
       };
     })
     .filter(Boolean);
+
+  const rawFields = getRawFieldCatalog(dashboard.projects);
+  if (rawFields.length) {
+    staticDatasets.push({
+      id: "rawFieldHistogram",
+      label: "Histogram dari header numeric Excel",
+      xKey: "name",
+      defaultType: "bar",
+      dynamicField: true,
+      fields: rawFields,
+      metrics: [{ key: "value", label: "Rows", format: "count" }],
+    });
+  }
+
+  return staticDatasets;
 }
 
 function toChatProjectRow(project) {
