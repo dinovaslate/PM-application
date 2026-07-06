@@ -273,6 +273,9 @@ export default function App() {
       });
       return next;
     });
+    setCustomCharts((current) =>
+      current.map((chart) => (getCustomChartPlacement(chart) === group.id ? { ...chart, visible: true } : chart)),
+    );
   }
 
   function handleAddCustomChart(chartSpec) {
@@ -281,6 +284,7 @@ export default function App() {
       const nextChart = {
         ...chartSpec,
         placement,
+        visible: chartSpec.visible !== false,
         id: chartSpec.id || `chart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         createdAt: chartSpec.createdAt || new Date().toISOString(),
       };
@@ -296,6 +300,10 @@ export default function App() {
 
   function handleRemoveCustomChart(chartId) {
     setCustomCharts((current) => current.filter((chart) => chart.id !== chartId));
+  }
+
+  function handleToggleCustomChart(chartId, isVisible) {
+    setCustomCharts((current) => current.map((chart) => (chart.id === chartId ? { ...chart, visible: isVisible } : chart)));
   }
 
   const ActiveView =
@@ -378,6 +386,7 @@ export default function App() {
               sourceName={sourceName}
               customCharts={customCharts}
               onRemoveCustomChart={handleRemoveCustomChart}
+              onToggleCustomChart={handleToggleCustomChart}
             />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
@@ -397,6 +406,7 @@ export default function App() {
         customCharts={customCharts}
         onAddCustomChart={handleAddCustomChart}
         onRemoveCustomChart={handleRemoveCustomChart}
+        onToggleCustomChart={handleToggleCustomChart}
       />
       {projects.length ? <DashboardChatbot dashboard={dashboard} sourceName={sourceName} /> : null}
     </div>
@@ -552,6 +562,7 @@ function CustomizationPanel({
   customCharts,
   onAddCustomChart,
   onRemoveCustomChart,
+  onToggleCustomChart,
 }) {
   if (!isOpen) return null;
 
@@ -625,6 +636,7 @@ function CustomizationPanel({
                     customCharts={customCharts}
                     onAddCustomChart={onAddCustomChart}
                     onRemoveCustomChart={onRemoveCustomChart}
+                    onToggleCustomChart={onToggleCustomChart}
                   />
                 </section>
               );
@@ -747,6 +759,7 @@ function CustomGraphStudio({
   customCharts = [],
   onAddCustomChart,
   onRemoveCustomChart,
+  onToggleCustomChart,
 }) {
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState("idle");
@@ -831,6 +844,42 @@ function CustomGraphStudio({
           {groupCharts.length}/{MAX_CUSTOM_CHARTS_PER_GROUP}
         </span>
       </div>
+
+      {groupCharts.length ? (
+        <div className="mb-2 space-y-2">
+          {groupCharts.map((chart) => {
+            const checked = chart.visible !== false;
+            return (
+              <div key={chart.id} className="flex min-w-0 items-center gap-2 rounded-xl bg-white px-3 py-2 shadow-sm">
+                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 shrink-0 accent-slate-950"
+                    checked={checked}
+                    onChange={(event) => onToggleCustomChart?.(chart.id, event.target.checked)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-bold text-slate-800" title={chart.title}>
+                      {chart.title || "Custom graph"}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10px] font-semibold uppercase text-slate-400">
+                      {chart.dataset}
+                    </span>
+                  </span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onRemoveCustomChart(chart.id)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                  aria-label={`Remove ${chart.title || "custom graph"}`}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       <form onSubmit={handleGenerateSpec} className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         {isPromptOpen ? (
@@ -3048,7 +3097,7 @@ function loadCustomCharts() {
     return Array.isArray(stored)
       ? stored
           .filter((chart) => chart?.id && chart?.dataset)
-          .map((chart) => ({ ...chart, placement: getCustomChartPlacement(chart) }))
+          .map((chart) => ({ ...chart, placement: getCustomChartPlacement(chart), visible: chart.visible !== false }))
           .slice(0, MAX_CUSTOM_CHARTS)
       : [];
   } catch {
@@ -3062,7 +3111,7 @@ function getCustomChartPlacement(chart) {
 }
 
 function getCustomChartsForTab(customCharts = [], tabId) {
-  return customCharts.filter((chart) => getCustomChartPlacement(chart) === tabId);
+  return customCharts.filter((chart) => chart.visible !== false && getCustomChartPlacement(chart) === tabId);
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
