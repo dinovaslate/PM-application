@@ -127,6 +127,7 @@ const tabs = [
 
 const CUSTOMIZATION_STORAGE_KEY = "pmo-dashboard-customization-v1";
 const TAB_VISIBILITY_STORAGE_KEY = "pmo-dashboard-tab-visibility-v1";
+const CUSTOM_PAGES_STORAGE_KEY = "pmo-dashboard-custom-pages-v1";
 const CUSTOM_CHARTS_STORAGE_KEY = "pmo-dashboard-custom-charts-v1";
 const MAX_CUSTOM_CHARTS = 16;
 const MAX_CUSTOM_CHARTS_PER_GROUP = 4;
@@ -202,6 +203,7 @@ export default function App() {
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
   const [customization, setCustomization] = useState(loadDashboardCustomization);
   const [tabVisibility, setTabVisibility] = useState(loadTabVisibility);
+  const [customPages, setCustomPages] = useState(loadCustomPages);
   const [customCharts, setCustomCharts] = useState(loadCustomCharts);
   const [filters, setFilters] = useState({
     priority: "All",
@@ -211,8 +213,8 @@ export default function App() {
   });
 
   const dashboard = useMemo(() => buildDashboard(projects, rules), [projects, rules]);
-  const visibleTabs = useMemo(() => tabs.filter((tab) => tabVisibility[tab.id] !== false), [tabVisibility]);
-  const hiddenTabs = useMemo(() => tabs.filter((tab) => tabVisibility[tab.id] === false), [tabVisibility]);
+  const allTabs = useMemo(() => [...tabs, ...customPages], [customPages]);
+  const visibleTabs = useMemo(() => allTabs.filter((tab) => tabVisibility[tab.id] !== false), [allTabs, tabVisibility]);
   const isWidgetVisible = useMemo(
     () => (widgetId) => customization[widgetId] !== false,
     [customization],
@@ -240,6 +242,11 @@ export default function App() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(TAB_VISIBILITY_STORAGE_KEY, JSON.stringify(tabVisibility));
   }, [tabVisibility]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CUSTOM_PAGES_STORAGE_KEY, JSON.stringify(customPages.map(toStoredCustomPage)));
+  }, [customPages]);
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some((tab) => tab.id === activeTab)) {
@@ -282,16 +289,15 @@ export default function App() {
 
   function restoreGroupSections(tabId) {
     const group = CUSTOMIZATION_GROUPS.find((item) => item.id === tabId);
-    if (!group) return;
     setCustomization((current) => {
       const next = { ...current };
-      group.options.forEach((option) => {
+      (group?.options || []).forEach((option) => {
         next[option.id] = true;
       });
       return next;
     });
     setCustomCharts((current) =>
-      current.map((chart) => (getCustomChartPlacement(chart) === group.id ? { ...chart, visible: true } : chart)),
+      current.map((chart) => (getCustomChartPlacement(chart) === tabId ? { ...chart, visible: true } : chart)),
     );
   }
 
@@ -301,27 +307,23 @@ export default function App() {
 
   function handleCustomizationDeleteSection(tabId = activeTab) {
     const group = CUSTOMIZATION_GROUPS.find((item) => item.id === tabId);
-    if (!group) return;
-    if (visibleTabs.length <= 1 && tabVisibility[group.id] !== false) return;
     setCustomization((current) => {
       const next = { ...current };
-      group.options.forEach((option) => {
+      (group?.options || []).forEach((option) => {
         next[option.id] = false;
       });
       return next;
     });
-    setCustomCharts((current) =>
-      current.map((chart) => (getCustomChartPlacement(chart) === group.id ? { ...chart, visible: false } : chart)),
-    );
-    setTabVisibility((current) => ({ ...current, [group.id]: false }));
+    setCustomCharts((current) => current.filter((chart) => getCustomChartPlacement(chart) !== tabId));
+    setCustomPages((current) => current.filter((page) => page.id !== tabId));
+    setTabVisibility((current) => ({ ...current, [tabId]: false }));
   }
 
-  function handleRestoreTab(tabId) {
-    const tab = tabs.find((item) => item.id === tabId);
-    if (!tab) return;
-    setTabVisibility((current) => ({ ...current, [tab.id]: true }));
-    restoreGroupSections(tab.id);
-    setActiveTab(tab.id);
+  function handleAddPage() {
+    const page = createCustomPage(getNextCustomPageNumber(customPages));
+    setCustomPages((current) => [...current, page]);
+    setTabVisibility((current) => ({ ...current, [page.id]: true }));
+    setActiveTab(page.id);
   }
 
   function handleAddCustomChart(chartSpec) {
@@ -352,25 +354,28 @@ export default function App() {
     setCustomCharts((current) => current.map((chart) => (chart.id === chartId ? { ...chart, visible: isVisible } : chart)));
   }
 
-  const ActiveView =
-    activeTab === "health"
+  const activeMeta = visibleTabs.find((tab) => tab.id === activeTab) || visibleTabs[0] || null;
+  const ActiveView = !activeMeta
+    ? null
+    : activeMeta.custom
+      ? CustomPage
+      : activeMeta.id === "health"
       ? ProjectHealthAnalysis
-      : activeTab === "capacity"
+      : activeMeta.id === "capacity"
         ? PmCapacity
-        : activeTab === "priority"
+        : activeMeta.id === "priority"
           ? PriorityActionList
           : ExecutiveOverview;
-  const activeMeta = tabs.find((tab) => tab.id === activeTab) || tabs[0];
+  const activePageId = activeMeta?.id || "";
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-950 lg:flex">
       <Sidebar
         activeTab={activeTab}
-        hiddenTabs={hiddenTabs}
         isLoading={isLoading}
+        onAddPage={handleAddPage}
         onFileChange={handleFileChange}
         onOpenCustomize={() => setIsCustomizeOpen(true)}
-        onRestoreTab={handleRestoreTab}
         onResetSample={() => {
           setProjects(sampleProjects);
           setSourceName("Sample portfolio");
@@ -393,9 +398,9 @@ export default function App() {
           <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="text-[28px] font-bold leading-9 tracking-normal text-slate-950 md:text-4xl md:leading-[44px]">
-                {activeMeta.title}
+                {activeMeta?.title || "No Pages"}
               </h1>
-              <p className="mt-1 text-sm text-slate-500">{activeMeta.subtitle}</p>
+              <p className="mt-1 text-sm text-slate-500">{activeMeta?.subtitle || "Add a page from the sidebar to continue."}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-[0.05em] text-slate-500">
@@ -421,8 +426,9 @@ export default function App() {
             </div>
           ) : null}
 
-          {projects.length ? (
+          {projects.length && ActiveView ? (
             <ActiveView
+              pageId={activePageId}
               dashboard={dashboard}
               rules={rules}
               setRules={setRules}
@@ -437,6 +443,8 @@ export default function App() {
               onRemoveCustomChart={handleRemoveCustomChart}
               onToggleCustomChart={handleToggleCustomChart}
             />
+          ) : projects.length ? (
+            <NoPagesState onAddPage={handleAddPage} />
           ) : (
             <EmptyDashboard isLoading={isLoading} onFileChange={handleFileChange} />
           )}
@@ -451,7 +459,6 @@ export default function App() {
         onDeleteSection={handleCustomizationDeleteSection}
         onReset={handleCustomizationReset}
         onToggle={handleCustomizationToggle}
-        tabVisibility={tabVisibility}
         visibleTabs={visibleTabs}
         dashboard={dashboard}
         sourceName={sourceName}
@@ -467,24 +474,14 @@ export default function App() {
 
 function Sidebar({
   activeTab,
-  hiddenTabs = [],
   setActiveTab,
   isLoading,
   onFileChange,
+  onAddPage,
   onOpenCustomize,
   onResetSample,
-  onRestoreTab,
   visibleTabs = tabs,
 }) {
-  const [tabToRestore, setTabToRestore] = useState("");
-  const selectedHiddenTab = tabToRestore || hiddenTabs[0]?.id || "";
-
-  function handleRestorePage() {
-    if (!selectedHiddenTab) return;
-    onRestoreTab(selectedHiddenTab);
-    setTabToRestore("");
-  }
-
   return (
     <aside className="w-full max-w-full border-slate-200 bg-white lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex lg:w-64 lg:flex-col lg:border-r">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 lg:h-16">
@@ -517,7 +514,7 @@ function Sidebar({
 
       <nav className="grid grid-cols-2 gap-1 px-3 py-3 lg:flex lg:flex-1 lg:flex-col">
         {visibleTabs.map((tab) => {
-          const Icon = tab.icon;
+          const Icon = tab.icon || FileSpreadsheet;
           const active = activeTab === tab.id;
           return (
             <button
@@ -535,29 +532,14 @@ function Sidebar({
             </button>
           );
         })}
-        {hiddenTabs.length ? (
-          <div className="col-span-2 mt-1 flex min-w-0 gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-2 lg:mt-auto lg:flex-col">
-            <select
-              className="h-9 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700"
-              value={selectedHiddenTab}
-              onChange={(event) => setTabToRestore(event.target.value)}
-            >
-              {hiddenTabs.map((tab) => (
-                <option key={tab.id} value={tab.id}>
-                  {tab.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={handleRestorePage}
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800"
-            >
-              <Plus size={13} />
-              Add page
-            </button>
-          </div>
-        ) : null}
+        <button
+          type="button"
+          onClick={onAddPage}
+          className="col-span-2 mt-1 inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-bold text-slate-700 transition hover:border-slate-400 hover:bg-white lg:mt-auto"
+        >
+          <Plus size={15} />
+          Add page
+        </button>
       </nav>
 
       <div className="hidden border-t border-slate-200 px-4 py-4 lg:block">
@@ -644,6 +626,30 @@ function EmptyDashboard({ isLoading, onFileChange }) {
   );
 }
 
+function NoPagesState({ onAddPage }) {
+  return (
+    <section className="flex min-h-[420px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center shadow-[0_4px_6px_-1px_rgb(15_23_42_/_0.05),0_2px_4px_-2px_rgb(15_23_42_/_0.05)]">
+      <div className="max-w-md">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+          <FileSpreadsheet size={22} strokeWidth={1.8} />
+        </div>
+        <h2 className="mt-4 text-xl font-bold text-slate-950">Belum ada page aktif</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
+          Tambahkan page baru dari sidebar untuk mulai menyusun dashboard custom.
+        </p>
+        <button
+          type="button"
+          onClick={onAddPage}
+          className="mt-5 inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-bold text-white transition hover:bg-slate-800"
+        >
+          <Plus size={15} />
+          Add page
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function CustomizationPanel({
   activeTab,
   customization,
@@ -652,7 +658,6 @@ function CustomizationPanel({
   onDeleteSection,
   onReset,
   onToggle,
-  tabVisibility,
   visibleTabs,
   dashboard,
   sourceName,
@@ -665,14 +670,13 @@ function CustomizationPanel({
 
   if (!isOpen) return null;
 
-  const visibleTabIds = (visibleTabs?.length ? visibleTabs : tabs).map((tab) => tab.id);
-  const activeGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === activeTab && visibleTabIds.includes(group.id));
+  const visiblePageGroups = (visibleTabs || []).map(getCustomizationGroupForPage);
+  const activeGroup = visiblePageGroups.find((group) => group.id === activeTab);
   const groups = [
     ...(activeGroup ? [activeGroup] : []),
-    ...CUSTOMIZATION_GROUPS.filter((group) => group.id !== activeTab && visibleTabIds.includes(group.id)),
+    ...visiblePageGroups.filter((group) => group.id !== activeTab),
   ];
   const canCustomizeGraphs = (dashboard?.kpis?.totalProjects || 0) > 0;
-  const visiblePageCount = visibleTabIds.length;
 
   function handleAddSection(groupId, addableSections) {
     const selectedValue = addSectionSelection[groupId] || addableSections[0]?.value || "";
@@ -714,7 +718,6 @@ function CustomizationPanel({
               const visibleCustomSections = groupCharts.filter((chart) => chart.visible !== false).length;
               const visibleCount = group.options.filter((option) => customization[option.id] !== false).length + visibleCustomSections;
               const totalCount = group.options.length + groupCharts.length;
-              const canDeletePage = visiblePageCount > 1 && tabVisibility?.[group.id] !== false;
               const addableSections = [
                 ...group.options
                   .filter((option) => customization[option.id] === false)
@@ -735,8 +738,7 @@ function CustomizationPanel({
                       <button
                         type="button"
                         onClick={() => onDeleteSection(group.id)}
-                        disabled={!canDeletePage}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-red-100 bg-white px-2.5 text-xs font-bold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-red-100 bg-white px-2.5 text-xs font-bold text-red-700 transition hover:bg-red-50"
                         aria-label={`Delete ${group.title} page`}
                       >
                         <Trash2 size={13} />
@@ -2284,6 +2286,23 @@ function PriorityActionList({ dashboard, filteredProjects, filters, setFilters, 
     );
 }
 
+function CustomPage({ pageId, dashboard, onOpenCustomize, customCharts = [], onRemoveCustomChart }) {
+  const tabCustomCharts = getCustomChartsForTab(customCharts, pageId);
+
+  return (
+    <div className="min-w-0 space-y-6">
+      <CustomDashboardCharts
+        tabId={pageId}
+        dashboard={dashboard}
+        customCharts={customCharts}
+        onRemoveCustomChart={onRemoveCustomChart}
+      />
+
+      {!tabCustomCharts.length ? <NoVisibleWidgets onOpenCustomize={onOpenCustomize} /> : null}
+    </div>
+  );
+}
+
 function RulePanel({ rules, setRules }) {
   return (
     <Panel title="Rules Configuration">
@@ -3356,6 +3375,57 @@ function buildDefaultTabVisibility() {
   }, {});
 }
 
+function createCustomPage(number) {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const label = `Custom Page ${number}`;
+  return {
+    id: `custom-page-${suffix}`,
+    custom: true,
+    label,
+    mobileLabel: `Page ${number}`,
+    shortLabel: label,
+    title: label,
+    subtitle: "Custom dashboard page.",
+  };
+}
+
+function getNextCustomPageNumber(customPages = []) {
+  const usedNumbers = customPages
+    .map((page) => String(page?.label || page?.title || "").match(/^Custom Page (\d+)$/)?.[1])
+    .map(Number)
+    .filter(Number.isFinite);
+  return Math.max(0, ...usedNumbers) + 1;
+}
+
+function normalizeCustomPage(page, index = 0) {
+  const fallbackLabel = `Custom Page ${index + 1}`;
+  const rawId = String(page?.id || `custom-page-${index + 1}`);
+  const id = rawId.startsWith("custom-page-") ? rawId : `custom-page-${rawId}`;
+  const label = String(page?.label || page?.title || fallbackLabel).slice(0, 60);
+  return {
+    id,
+    custom: true,
+    label,
+    mobileLabel: String(page?.mobileLabel || label).slice(0, 24),
+    shortLabel: String(page?.shortLabel || label).slice(0, 36),
+    title: String(page?.title || label).slice(0, 80),
+    subtitle: String(page?.subtitle || "Custom dashboard page.").slice(0, 140),
+  };
+}
+
+function toStoredCustomPage(page) {
+  const normalized = normalizeCustomPage(page);
+  return {
+    id: normalized.id,
+    custom: true,
+    label: normalized.label,
+    mobileLabel: normalized.mobileLabel,
+    shortLabel: normalized.shortLabel,
+    title: normalized.title,
+    subtitle: normalized.subtitle,
+  };
+}
+
 function loadDashboardCustomization() {
   if (typeof window === "undefined") return DEFAULT_CUSTOMIZATION;
   try {
@@ -3370,11 +3440,27 @@ function loadTabVisibility() {
   if (typeof window === "undefined") return DEFAULT_TAB_VISIBILITY;
   try {
     const stored = JSON.parse(window.localStorage.getItem(TAB_VISIBILITY_STORAGE_KEY) || "{}");
-    const next = { ...DEFAULT_TAB_VISIBILITY, ...stored };
-    const hasVisibleTab = tabs.some((tab) => next[tab.id] !== false);
-    return hasVisibleTab ? next : DEFAULT_TAB_VISIBILITY;
+    return { ...DEFAULT_TAB_VISIBILITY, ...stored };
   } catch {
     return DEFAULT_TAB_VISIBILITY;
+  }
+}
+
+function loadCustomPages() {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CUSTOM_PAGES_STORAGE_KEY) || "[]");
+    if (!Array.isArray(stored)) return [];
+    const seen = new Set();
+    return stored
+      .map(normalizeCustomPage)
+      .filter((page) => {
+        if (seen.has(page.id) || tabs.some((tab) => tab.id === page.id)) return false;
+        seen.add(page.id);
+        return true;
+      });
+  } catch {
+    return [];
   }
 }
 
@@ -3395,11 +3481,24 @@ function loadCustomCharts() {
 
 function getCustomChartPlacement(chart) {
   const placement = chart?.placement || chart?.groupId || "overview";
-  return CUSTOMIZATION_GROUPS.some((group) => group.id === placement) ? placement : "overview";
+  if (CUSTOMIZATION_GROUPS.some((group) => group.id === placement)) return placement;
+  if (String(placement).startsWith("custom-page-")) return String(placement);
+  return "overview";
 }
 
 function getCustomChartsForTab(customCharts = [], tabId) {
   return customCharts.filter((chart) => chart.visible !== false && getCustomChartPlacement(chart) === tabId);
+}
+
+function getCustomizationGroupForPage(page) {
+  return (
+    CUSTOMIZATION_GROUPS.find((group) => group.id === page.id) || {
+      id: page.id,
+      title: page.title || page.label || "Custom Page",
+      options: [],
+      custom: true,
+    }
+  );
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
