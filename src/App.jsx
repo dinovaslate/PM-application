@@ -582,6 +582,8 @@ function CustomizationPanel({
   onRemoveCustomChart,
   onToggleCustomChart,
 }) {
+  const [addSectionSelection, setAddSectionSelection] = useState({});
+
   if (!isOpen) return null;
 
   const activeGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === activeTab);
@@ -590,6 +592,20 @@ function CustomizationPanel({
     ...CUSTOMIZATION_GROUPS.filter((group) => group.id !== activeTab),
   ];
   const canCustomizeGraphs = (dashboard?.kpis?.totalProjects || 0) > 0;
+
+  function handleAddSection(groupId, addableSections) {
+    const selectedValue = addSectionSelection[groupId] || addableSections[0]?.value || "";
+    if (!selectedValue) return;
+    const [type, id] = selectedValue.split(":");
+    if (type === "widget") onToggle(id, true);
+    if (type === "custom") onToggleCustomChart?.(id, true);
+    setAddSectionSelection((current) => ({ ...current, [groupId]: "" }));
+  }
+
+  function handleResetWithConfirmation(group) {
+    const shouldReset = window.confirm(`Reset ${group.title}? Semua section yang disembunyikan akan ditampilkan lagi.`);
+    if (shouldReset) onReset(group.id);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -617,6 +633,15 @@ function CustomizationPanel({
               const visibleCustomSections = groupCharts.filter((chart) => chart.visible !== false).length;
               const visibleCount = group.options.filter((option) => customization[option.id] !== false).length + visibleCustomSections;
               const totalCount = group.options.length + groupCharts.length;
+              const addableSections = [
+                ...group.options
+                  .filter((option) => customization[option.id] === false)
+                  .map((option) => ({ value: `widget:${option.id}`, label: option.label })),
+                ...groupCharts
+                  .filter((chart) => chart.visible === false)
+                  .map((chart) => ({ value: `custom:${chart.id}`, label: chart.sectionTitle || chart.title || "Custom section" })),
+              ];
+              const selectedAddSection = addSectionSelection[group.id] || addableSections[0]?.value || "";
               return (
                 <section key={group.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -636,13 +661,38 @@ function CustomizationPanel({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onReset(group.id)}
+                        onClick={() => handleResetWithConfirmation(group)}
                         className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
                       >
                         Reset
                       </button>
                     </div>
                   </div>
+                  {addableSections.length ? (
+                    <div className="mb-3 flex min-w-0 flex-col gap-2 rounded-xl bg-white p-2 shadow-sm sm:flex-row">
+                      <select
+                        className="h-9 min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-bold text-slate-700"
+                        value={selectedAddSection}
+                        onChange={(event) =>
+                          setAddSectionSelection((current) => ({ ...current, [group.id]: event.target.value }))
+                        }
+                      >
+                        {addableSections.map((section) => (
+                          <option key={section.value} value={section.value}>
+                            {section.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleAddSection(group.id, addableSections)}
+                        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800"
+                      >
+                        <Plus size={13} />
+                        Add section
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="space-y-2">
                     {group.options.map((option) => {
                       const checked = customization[option.id] !== false;
@@ -967,7 +1017,7 @@ function CustomGraphStudio({
           className={`${isPromptOpen || error || lastAnswer ? "mt-2" : ""} inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50`}
         >
           <Plus size={14} />
-          {status === "loading" ? "Generating..." : isPromptOpen ? "Create section" : "Add section"}
+          {status === "loading" ? "Generating..." : isPromptOpen ? "Create section" : "Create custom section"}
         </button>
       </form>
     </div>
