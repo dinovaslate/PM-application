@@ -14,6 +14,7 @@ import {
   ImagePlus,
   LineChart as LineChartIcon,
   MessageCircle,
+  Pencil,
   Plus,
   Search,
   Send,
@@ -128,6 +129,7 @@ const tabs = [
 const CUSTOMIZATION_STORAGE_KEY = "pmo-dashboard-customization-v1";
 const TAB_VISIBILITY_STORAGE_KEY = "pmo-dashboard-tab-visibility-v1";
 const CUSTOM_PAGES_STORAGE_KEY = "pmo-dashboard-custom-pages-v1";
+const PAGE_RENAMES_STORAGE_KEY = "pmo-dashboard-page-renames-v1";
 const CUSTOM_CHARTS_STORAGE_KEY = "pmo-dashboard-custom-charts-v1";
 const MAX_CUSTOM_CHARTS = 16;
 const MAX_CUSTOM_CHARTS_PER_GROUP = 4;
@@ -204,6 +206,7 @@ export default function App() {
   const [customization, setCustomization] = useState(loadDashboardCustomization);
   const [tabVisibility, setTabVisibility] = useState(loadTabVisibility);
   const [customPages, setCustomPages] = useState(loadCustomPages);
+  const [pageRenames, setPageRenames] = useState(loadPageRenames);
   const [customCharts, setCustomCharts] = useState(loadCustomCharts);
   const [filters, setFilters] = useState({
     priority: "All",
@@ -213,7 +216,7 @@ export default function App() {
   });
 
   const dashboard = useMemo(() => buildDashboard(projects, rules), [projects, rules]);
-  const allTabs = useMemo(() => [...tabs, ...customPages], [customPages]);
+  const allTabs = useMemo(() => applyPageRenamesToTabs([...tabs, ...customPages], pageRenames), [customPages, pageRenames]);
   const visibleTabs = useMemo(() => allTabs.filter((tab) => tabVisibility[tab.id] !== false), [allTabs, tabVisibility]);
   const isWidgetVisible = useMemo(
     () => (widgetId) => customization[widgetId] !== false,
@@ -247,6 +250,11 @@ export default function App() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CUSTOM_PAGES_STORAGE_KEY, JSON.stringify(customPages.map(toStoredCustomPage)));
   }, [customPages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PAGE_RENAMES_STORAGE_KEY, JSON.stringify(pageRenames));
+  }, [pageRenames]);
 
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some((tab) => tab.id === activeTab)) {
@@ -316,6 +324,7 @@ export default function App() {
     });
     setCustomCharts((current) => current.filter((chart) => getCustomChartPlacement(chart) !== tabId));
     setCustomPages((current) => current.filter((page) => page.id !== tabId));
+    setPageRenames((current) => removePageRename(current, tabId));
     setTabVisibility((current) => ({ ...current, [tabId]: false }));
   }
 
@@ -324,6 +333,15 @@ export default function App() {
     setCustomPages((current) => [...current, page]);
     setTabVisibility((current) => ({ ...current, [page.id]: true }));
     setActiveTab(page.id);
+  }
+
+  function handleRenamePage(tabId, nextName) {
+    const cleanName = normalizePageName(nextName);
+    if (!cleanName) return;
+    setPageRenames((current) => ({
+      ...current,
+      [tabId]: cleanName,
+    }));
   }
 
   function handleAddCustomChart(chartSpec) {
@@ -457,6 +475,7 @@ export default function App() {
         isOpen={isCustomizeOpen}
         onClose={() => setIsCustomizeOpen(false)}
         onDeleteSection={handleCustomizationDeleteSection}
+        onRenamePage={handleRenamePage}
         onReset={handleCustomizationReset}
         onToggle={handleCustomizationToggle}
         visibleTabs={visibleTabs}
@@ -656,6 +675,7 @@ function CustomizationPanel({
   isOpen,
   onClose,
   onDeleteSection,
+  onRenamePage,
   onReset,
   onToggle,
   visibleTabs,
@@ -667,6 +687,8 @@ function CustomizationPanel({
   onToggleCustomChart,
 }) {
   const [addSectionSelection, setAddSectionSelection] = useState({});
+  const [renamingPageId, setRenamingPageId] = useState("");
+  const [renameDraft, setRenameDraft] = useState("");
 
   if (!isOpen) return null;
 
@@ -690,6 +712,20 @@ function CustomizationPanel({
   function handleResetWithConfirmation(group) {
     const shouldReset = window.confirm(`Reset ${group.title}? Semua section yang disembunyikan akan ditampilkan lagi.`);
     if (shouldReset) onReset(group.id);
+  }
+
+  function handleStartRename(group) {
+    setRenamingPageId(group.id);
+    setRenameDraft(group.title || "");
+  }
+
+  function handleRenameSubmit(event, group) {
+    event.preventDefault();
+    const cleanName = normalizePageName(renameDraft);
+    if (!cleanName) return;
+    onRenamePage(group.id, cleanName);
+    setRenamingPageId("");
+    setRenameDraft("");
   }
 
   return (
@@ -729,12 +765,21 @@ function CustomizationPanel({
               const selectedAddSection = addSectionSelection[group.id] || addableSections[0]?.value || "";
               return (
                 <section key={group.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="mb-3 flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-slate-950">{group.title}</p>
                       <p className="text-xs text-slate-500">{visibleCount} dari {totalCount} aktif</p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleStartRename(group)}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+                        aria-label={`Rename ${group.title} page`}
+                      >
+                        <Pencil size={13} />
+                        Rename
+                      </button>
                       <button
                         type="button"
                         onClick={() => onDeleteSection(group.id)}
@@ -753,6 +798,40 @@ function CustomizationPanel({
                       </button>
                     </div>
                   </div>
+                  {renamingPageId === group.id ? (
+                    <form
+                      onSubmit={(event) => handleRenameSubmit(event, group)}
+                      className="mb-3 flex min-w-0 flex-col gap-2 rounded-xl bg-white p-2 shadow-sm sm:flex-row"
+                    >
+                      <input
+                        value={renameDraft}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        className="h-9 min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
+                        aria-label={`New name for ${group.title}`}
+                        maxLength={60}
+                        autoFocus
+                      />
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="submit"
+                          disabled={!normalizePageName(renameDraft)}
+                          className="inline-flex h-9 items-center justify-center rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRenamingPageId("");
+                            setRenameDraft("");
+                          }}
+                          className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
                   {addableSections.length ? (
                     <div className="mb-3 flex min-w-0 flex-col gap-2 rounded-xl bg-white p-2 shadow-sm sm:flex-row">
                       <select
@@ -3426,6 +3505,31 @@ function toStoredCustomPage(page) {
   };
 }
 
+function normalizePageName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 60);
+}
+
+function applyPageRenamesToTabs(tabList, pageRenames = {}) {
+  return tabList.map((tab) => {
+    const renamed = normalizePageName(pageRenames[tab.id]);
+    if (!renamed) return tab;
+    return {
+      ...tab,
+      label: renamed,
+      mobileLabel: renamed.slice(0, 24),
+      shortLabel: renamed.slice(0, 36),
+      title: renamed,
+    };
+  });
+}
+
+function removePageRename(pageRenames, tabId) {
+  if (!pageRenames?.[tabId]) return pageRenames;
+  const next = { ...pageRenames };
+  delete next[tabId];
+  return next;
+}
+
 function loadDashboardCustomization() {
   if (typeof window === "undefined") return DEFAULT_CUSTOMIZATION;
   try {
@@ -3464,6 +3568,21 @@ function loadCustomPages() {
   }
 }
 
+function loadPageRenames() {
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(PAGE_RENAMES_STORAGE_KEY) || "{}");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+    return Object.entries(stored).reduce((renames, [id, name]) => {
+      const cleanName = normalizePageName(name);
+      if (cleanName) renames[String(id)] = cleanName;
+      return renames;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
 function loadCustomCharts() {
   if (typeof window === "undefined") return [];
   try {
@@ -3491,14 +3610,20 @@ function getCustomChartsForTab(customCharts = [], tabId) {
 }
 
 function getCustomizationGroupForPage(page) {
-  return (
-    CUSTOMIZATION_GROUPS.find((group) => group.id === page.id) || {
+  const baseGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === page.id);
+  if (baseGroup) {
+    return {
+      ...baseGroup,
+      title: page.title || page.label || baseGroup.title,
+    };
+  }
+
+  return {
       id: page.id,
       title: page.title || page.label || "Custom Page",
       options: [],
       custom: true,
-    }
-  );
+  };
 }
 
 function materializeCustomChart(chartSpec, dashboard) {
