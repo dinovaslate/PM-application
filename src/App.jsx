@@ -18,6 +18,7 @@ import {
   Search,
   Send,
   Settings2,
+  Trash2,
   Upload,
   UserRound,
   Users,
@@ -278,6 +279,21 @@ export default function App() {
     );
   }
 
+  function handleCustomizationDeleteSection(tabId = activeTab) {
+    const group = CUSTOMIZATION_GROUPS.find((item) => item.id === tabId);
+    if (!group) return;
+    setCustomization((current) => {
+      const next = { ...current };
+      group.options.forEach((option) => {
+        next[option.id] = false;
+      });
+      return next;
+    });
+    setCustomCharts((current) =>
+      current.map((chart) => (getCustomChartPlacement(chart) === group.id ? { ...chart, visible: false } : chart)),
+    );
+  }
+
   function handleAddCustomChart(chartSpec) {
     setCustomCharts((current) => {
       const placement = chartSpec.placement || "overview";
@@ -399,6 +415,7 @@ export default function App() {
         customization={customization}
         isOpen={isCustomizeOpen}
         onClose={() => setIsCustomizeOpen(false)}
+        onDeleteSection={handleCustomizationDeleteSection}
         onReset={handleCustomizationReset}
         onToggle={handleCustomizationToggle}
         dashboard={dashboard}
@@ -555,6 +572,7 @@ function CustomizationPanel({
   customization,
   isOpen,
   onClose,
+  onDeleteSection,
   onReset,
   onToggle,
   dashboard,
@@ -595,21 +613,35 @@ function CustomizationPanel({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="space-y-5">
             {groups.map((group) => {
-              const visibleCount = group.options.filter((option) => customization[option.id] !== false).length;
+              const groupCharts = customCharts.filter((chart) => getCustomChartPlacement(chart) === group.id);
+              const visibleCustomSections = groupCharts.filter((chart) => chart.visible !== false).length;
+              const visibleCount = group.options.filter((option) => customization[option.id] !== false).length + visibleCustomSections;
+              const totalCount = group.options.length + groupCharts.length;
               return (
                 <section key={group.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-bold text-slate-950">{group.title}</p>
-                      <p className="text-xs text-slate-500">{visibleCount} dari {group.options.length} aktif</p>
+                      <p className="text-xs text-slate-500">{visibleCount} dari {totalCount} aktif</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onReset(group.id)}
-                      className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
-                    >
-                      Reset
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onDeleteSection(group.id)}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-red-100 bg-white px-2.5 text-xs font-bold text-red-700 transition hover:bg-red-50"
+                        aria-label={`Delete ${group.title} section`}
+                      >
+                        <Trash2 size={13} />
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onReset(group.id)}
+                        className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"
+                      >
+                        Reset
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     {group.options.map((option) => {
@@ -851,7 +883,7 @@ function CustomGraphStudio({
     <div ref={containerRef} className="mt-4 border-t border-slate-200 pt-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.05em] text-slate-500">Custom graph</p>
+          <p className="text-xs font-bold uppercase tracking-[0.05em] text-slate-500">Custom section</p>
           <p className="mt-0.5 truncate text-[11px] font-semibold text-slate-500">
             {disabled ? "Upload Excel dulu" : `Section baru untuk ${groupTitle}`}
           </p>
@@ -876,7 +908,7 @@ function CustomGraphStudio({
                   />
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-bold text-slate-800" title={chart.title}>
-                      {chart.title || "Custom graph"}
+                      {chart.title || "Custom section"}
                     </span>
                     <span className="mt-0.5 block truncate text-[10px] font-semibold uppercase text-slate-400">
                       {formatCustomDatasetLabel(chart.dataset)}
@@ -887,7 +919,7 @@ function CustomGraphStudio({
                   type="button"
                   onClick={() => onRemoveCustomChart(chart.id)}
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
-                  aria-label={`Remove ${chart.title || "custom graph"}`}
+                  aria-label={`Remove ${chart.title || "custom section"}`}
                 >
                   <X size={13} />
                 </button>
@@ -935,7 +967,7 @@ function CustomGraphStudio({
           className={`${isPromptOpen || error || lastAnswer ? "mt-2" : ""} inline-flex h-8 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50`}
         >
           <Plus size={14} />
-          {status === "loading" ? "Generating..." : isPromptOpen ? "Add graph" : "Add custom graph"}
+          {status === "loading" ? "Generating..." : isPromptOpen ? "Create section" : "Add section"}
         </button>
       </form>
     </div>
@@ -1011,7 +1043,7 @@ function CustomChartCard({ chartSpec, dashboard, onRemove, compact = false }) {
           type="button"
           onClick={onRemove}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
-          aria-label="Remove custom graph"
+          aria-label="Remove custom section"
         >
           <X size={14} />
         </button>
