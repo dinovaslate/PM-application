@@ -126,6 +126,7 @@ const tabs = [
 ];
 
 const CUSTOMIZATION_STORAGE_KEY = "pmo-dashboard-customization-v1";
+const TAB_VISIBILITY_STORAGE_KEY = "pmo-dashboard-tab-visibility-v1";
 const CUSTOM_CHARTS_STORAGE_KEY = "pmo-dashboard-custom-charts-v1";
 const MAX_CUSTOM_CHARTS = 16;
 const MAX_CUSTOM_CHARTS_PER_GROUP = 4;
@@ -189,6 +190,7 @@ const CUSTOMIZATION_GROUPS = [
 ];
 
 const DEFAULT_CUSTOMIZATION = buildDefaultCustomization();
+const DEFAULT_TAB_VISIBILITY = buildDefaultTabVisibility();
 
 export default function App() {
   const [projects, setProjects] = useState([]);
@@ -199,6 +201,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
   const [customization, setCustomization] = useState(loadDashboardCustomization);
+  const [tabVisibility, setTabVisibility] = useState(loadTabVisibility);
   const [customCharts, setCustomCharts] = useState(loadCustomCharts);
   const [filters, setFilters] = useState({
     priority: "All",
@@ -208,6 +211,8 @@ export default function App() {
   });
 
   const dashboard = useMemo(() => buildDashboard(projects, rules), [projects, rules]);
+  const visibleTabs = useMemo(() => tabs.filter((tab) => tabVisibility[tab.id] !== false), [tabVisibility]);
+  const hiddenTabs = useMemo(() => tabs.filter((tab) => tabVisibility[tab.id] === false), [tabVisibility]);
   const isWidgetVisible = useMemo(
     () => (widgetId) => customization[widgetId] !== false,
     [customization],
@@ -230,6 +235,17 @@ export default function App() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CUSTOMIZATION_STORAGE_KEY, JSON.stringify(customization));
   }, [customization]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(TAB_VISIBILITY_STORAGE_KEY, JSON.stringify(tabVisibility));
+  }, [tabVisibility]);
+
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id);
+    }
+  }, [activeTab, visibleTabs]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -264,7 +280,7 @@ export default function App() {
     }));
   }
 
-  function handleCustomizationReset(tabId = activeTab) {
+  function restoreGroupSections(tabId) {
     const group = CUSTOMIZATION_GROUPS.find((item) => item.id === tabId);
     if (!group) return;
     setCustomization((current) => {
@@ -279,9 +295,14 @@ export default function App() {
     );
   }
 
+  function handleCustomizationReset(tabId = activeTab) {
+    restoreGroupSections(tabId);
+  }
+
   function handleCustomizationDeleteSection(tabId = activeTab) {
     const group = CUSTOMIZATION_GROUPS.find((item) => item.id === tabId);
     if (!group) return;
+    if (visibleTabs.length <= 1 && tabVisibility[group.id] !== false) return;
     setCustomization((current) => {
       const next = { ...current };
       group.options.forEach((option) => {
@@ -292,6 +313,15 @@ export default function App() {
     setCustomCharts((current) =>
       current.map((chart) => (getCustomChartPlacement(chart) === group.id ? { ...chart, visible: false } : chart)),
     );
+    setTabVisibility((current) => ({ ...current, [group.id]: false }));
+  }
+
+  function handleRestoreTab(tabId) {
+    const tab = tabs.find((item) => item.id === tabId);
+    if (!tab) return;
+    setTabVisibility((current) => ({ ...current, [tab.id]: true }));
+    restoreGroupSections(tab.id);
+    setActiveTab(tab.id);
   }
 
   function handleAddCustomChart(chartSpec) {
@@ -336,9 +366,11 @@ export default function App() {
     <div className="min-h-screen bg-[#f8fafc] text-slate-950 lg:flex">
       <Sidebar
         activeTab={activeTab}
+        hiddenTabs={hiddenTabs}
         isLoading={isLoading}
         onFileChange={handleFileChange}
         onOpenCustomize={() => setIsCustomizeOpen(true)}
+        onRestoreTab={handleRestoreTab}
         onResetSample={() => {
           setProjects(sampleProjects);
           setSourceName("Sample portfolio");
@@ -346,6 +378,7 @@ export default function App() {
           setFilters({ priority: "All", bu: "All", pm: "All", health: "All" });
         }}
         setActiveTab={setActiveTab}
+        visibleTabs={visibleTabs}
       />
 
       <div className="min-w-0 flex-1 lg:pl-64">
@@ -418,6 +451,8 @@ export default function App() {
         onDeleteSection={handleCustomizationDeleteSection}
         onReset={handleCustomizationReset}
         onToggle={handleCustomizationToggle}
+        tabVisibility={tabVisibility}
+        visibleTabs={visibleTabs}
         dashboard={dashboard}
         sourceName={sourceName}
         customCharts={customCharts}
@@ -430,7 +465,26 @@ export default function App() {
   );
 }
 
-function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onOpenCustomize, onResetSample }) {
+function Sidebar({
+  activeTab,
+  hiddenTabs = [],
+  setActiveTab,
+  isLoading,
+  onFileChange,
+  onOpenCustomize,
+  onResetSample,
+  onRestoreTab,
+  visibleTabs = tabs,
+}) {
+  const [tabToRestore, setTabToRestore] = useState("");
+  const selectedHiddenTab = tabToRestore || hiddenTabs[0]?.id || "";
+
+  function handleRestorePage() {
+    if (!selectedHiddenTab) return;
+    onRestoreTab(selectedHiddenTab);
+    setTabToRestore("");
+  }
+
   return (
     <aside className="w-full max-w-full border-slate-200 bg-white lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex lg:w-64 lg:flex-col lg:border-r">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 lg:h-16">
@@ -462,7 +516,7 @@ function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onOpenCusto
       </div>
 
       <nav className="grid grid-cols-2 gap-1 px-3 py-3 lg:flex lg:flex-1 lg:flex-col">
-        {tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
@@ -481,6 +535,29 @@ function Sidebar({ activeTab, setActiveTab, isLoading, onFileChange, onOpenCusto
             </button>
           );
         })}
+        {hiddenTabs.length ? (
+          <div className="col-span-2 mt-1 flex min-w-0 gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-2 lg:mt-auto lg:flex-col">
+            <select
+              className="h-9 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 text-xs font-bold text-slate-700"
+              value={selectedHiddenTab}
+              onChange={(event) => setTabToRestore(event.target.value)}
+            >
+              {hiddenTabs.map((tab) => (
+                <option key={tab.id} value={tab.id}>
+                  {tab.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleRestorePage}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-bold text-white transition hover:bg-slate-800"
+            >
+              <Plus size={13} />
+              Add page
+            </button>
+          </div>
+        ) : null}
       </nav>
 
       <div className="hidden border-t border-slate-200 px-4 py-4 lg:block">
@@ -575,6 +652,8 @@ function CustomizationPanel({
   onDeleteSection,
   onReset,
   onToggle,
+  tabVisibility,
+  visibleTabs,
   dashboard,
   sourceName,
   customCharts,
@@ -586,12 +665,14 @@ function CustomizationPanel({
 
   if (!isOpen) return null;
 
-  const activeGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === activeTab);
+  const visibleTabIds = (visibleTabs?.length ? visibleTabs : tabs).map((tab) => tab.id);
+  const activeGroup = CUSTOMIZATION_GROUPS.find((group) => group.id === activeTab && visibleTabIds.includes(group.id));
   const groups = [
     ...(activeGroup ? [activeGroup] : []),
-    ...CUSTOMIZATION_GROUPS.filter((group) => group.id !== activeTab),
+    ...CUSTOMIZATION_GROUPS.filter((group) => group.id !== activeTab && visibleTabIds.includes(group.id)),
   ];
   const canCustomizeGraphs = (dashboard?.kpis?.totalProjects || 0) > 0;
+  const visiblePageCount = visibleTabIds.length;
 
   function handleAddSection(groupId, addableSections) {
     const selectedValue = addSectionSelection[groupId] || addableSections[0]?.value || "";
@@ -633,6 +714,7 @@ function CustomizationPanel({
               const visibleCustomSections = groupCharts.filter((chart) => chart.visible !== false).length;
               const visibleCount = group.options.filter((option) => customization[option.id] !== false).length + visibleCustomSections;
               const totalCount = group.options.length + groupCharts.length;
+              const canDeletePage = visiblePageCount > 1 && tabVisibility?.[group.id] !== false;
               const addableSections = [
                 ...group.options
                   .filter((option) => customization[option.id] === false)
@@ -653,8 +735,9 @@ function CustomizationPanel({
                       <button
                         type="button"
                         onClick={() => onDeleteSection(group.id)}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-red-100 bg-white px-2.5 text-xs font-bold text-red-700 transition hover:bg-red-50"
-                        aria-label={`Delete ${group.title} section`}
+                        disabled={!canDeletePage}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-red-100 bg-white px-2.5 text-xs font-bold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label={`Delete ${group.title} page`}
                       >
                         <Trash2 size={13} />
                         Delete
@@ -3266,6 +3349,13 @@ function buildDefaultCustomization() {
   }, {});
 }
 
+function buildDefaultTabVisibility() {
+  return tabs.reduce((settings, tab) => {
+    settings[tab.id] = true;
+    return settings;
+  }, {});
+}
+
 function loadDashboardCustomization() {
   if (typeof window === "undefined") return DEFAULT_CUSTOMIZATION;
   try {
@@ -3273,6 +3363,18 @@ function loadDashboardCustomization() {
     return { ...DEFAULT_CUSTOMIZATION, ...stored };
   } catch {
     return DEFAULT_CUSTOMIZATION;
+  }
+}
+
+function loadTabVisibility() {
+  if (typeof window === "undefined") return DEFAULT_TAB_VISIBILITY;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(TAB_VISIBILITY_STORAGE_KEY) || "{}");
+    const next = { ...DEFAULT_TAB_VISIBILITY, ...stored };
+    const hasVisibleTab = tabs.some((tab) => next[tab.id] !== false);
+    return hasVisibleTab ? next : DEFAULT_TAB_VISIBILITY;
+  } catch {
+    return DEFAULT_TAB_VISIBILITY;
   }
 }
 
